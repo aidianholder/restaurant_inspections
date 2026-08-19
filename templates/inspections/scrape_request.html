@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Retrieve inspections{% endblock %}
+{% block content %}
+<h2>Retrieve inspections</h2>
+<p class="sub">Pick a county and a date range. The retrieval runs in the background against
+   the Arkansas Department of Health's public search.</p>
+
+<div class="card">
+  <form method="post">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="errors">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="row">
+      <div>
+        <label for="{{ form.county.id_for_label }}">County</label>
+        {{ form.county }}
+        {% if form.county.errors %}<div class="errors">{{ form.county.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label for="{{ form.date_from.id_for_label }}">From</label>
+        {{ form.date_from }}
+        {% if form.date_from.errors %}<div class="errors">{{ form.date_from.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label for="{{ form.date_to.id_for_label }}">To</label>
+        {{ form.date_to }}
+        {% if form.date_to.errors %}<div class="errors">{{ form.date_to.errors }}</div>{% endif %}
+      </div>
+    </div>
+    <p style="margin:20px 0 0"><button type="submit">Retrieve inspections</button></p>
+  </form>
+</div>
+
+{% if recent_runs %}
+<h2 style="margin-top:36px;font-size:18px">Recent retrievals</h2>
+<table>
+  <tr><th>County</th><th>Range</th><th>Status</th><th>Facilities</th><th>Inspections</th><th>Observations</th><th>Reports</th></tr>
+  {% for run in recent_runs %}
+  <tr>
+    <td><a href="{% url 'scrape-detail' run.pk %}">{{ run.county }}</a></td>
+    <td>{{ run.date_from }} – {{ run.date_to }}</td>
+    <td><span class="pill {{ run.status }}">{{ run.get_status_display }}</span></td>
+    <td>{{ run.facilities_created }}</td>
+    <td>{{ run.inspections_created }}</td>
+    <td>{{ run.violations_created }}</td>
+    <td>{{ run.reports_downloaded }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

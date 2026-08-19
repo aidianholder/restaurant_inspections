@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ facility.name }}{% endblock %}
+{% block content %}
+<h2>{{ facility.name }}</h2>
+<p class="sub">
+  {{ facility.address_display }}{% if facility.phone %} · {{ facility.phone }}{% endif %}
+  {% if facility.county %} · {{ facility.county }} County{% endif %}
+  {% if facility.has_location %}
+    · <a href="https://www.google.com/maps/search/?api=1&query={{ facility.latitude }},{{ facility.longitude }}"
+         target="_blank" rel="noopener">{{ facility.latitude|floatformat:5 }}, {{ facility.longitude|floatformat:5 }}</a>
+    <span title="Source of these coordinates">({{ facility.get_geocode_source_display }})</span>
+  {% endif %}
+</p>
+
+{% for inspection in facility.inspections.all %}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+    <strong style="font-size:17px">{{ inspection.date }}</strong>
+    <span class="pill">{{ inspection.inspection_type }}</span>
+    {% with n=inspection.violation_count %}
+      {% if n %}
+        <span style="color:#8c1d1d;font-size:14px">
+          {{ n }} violation{{ n|pluralize }}</span>
+        {% if inspection.website_undercounted %}
+          <span class="pill" title="The state's website lists fewer than the inspection report contains"
+                style="border-color:#9a6700;color:#9a6700">state site shows {{ inspection.observation_count }}</span>
+        {% endif %}
+      {% else %}
+        <span style="color:#1f6f43;font-size:14px">No violations</span>
+      {% endif %}
+    {% endwith %}
+    {% if inspection.report_pdf %}
+      <a href="{{ inspection.report_pdf.url }}" target="_blank" style="margin-left:auto;font-size:14px">
+        Full report (PDF) →</a>
+    {% endif %}
+  </div>
+
+  {% for v in inspection.violations.all %}
+  <div style="margin-top:16px;padding-top:14px;border-top:1px solid #f0eeea">
+    <div style="font-weight:600;font-size:14px">
+      {% if v.item_number %}<span style="color:#888">{{ v.item_number }}.</span> {% endif %}{{ v.code }}
+      {% if v.priority_level %}
+        <span class="pill" style="margin-left:6px{% if v.is_priority %};border-color:#8c1d1d;color:#8c1d1d{% endif %}"
+              title="{{ v.get_priority_level_display }}">{{ v.priority_level }}</span>
+      {% endif %}
+    </div>
+    {% if v.code_explanation %}
+      <div style="color:#666;font-size:13px;margin:2px 0 6px">{{ v.code_explanation }}</div>
+    {% endif %}
+    <div style="font-size:14px">{{ v.inspector_comments }}</div>
+    {% if v.correct_by %}
+      <div style="color:#888;font-size:12px;margin-top:4px">Correct by {{ v.correct_by }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if inspection.observation_count and not inspection.details_scraped_at and not inspection.report_parsed_at %}
+    <p style="color:#9a6700;font-size:13px;margin:14px 0 0">
+      Observation details for this inspection haven't been retrieved yet.</p>
+  {% endif %}
+</div>
+{% empty %}
+<p class="sub">No inspections stored for this establishment.</p>
+{% endfor %}
+{% endblock %}

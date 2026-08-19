@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Arkansas Health Inspections{% endblock %}</title>
+  <style>
+    :root {
+      --ink: #1a1a1a; --muted: #666; --line: #e0ddd8; --bg: #fbfaf8;
+      --accent: #8c1d1d; --ok: #1f6f43; --warn: #9a6700;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+           font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Georgia, serif; }
+    header { border-bottom: 2px solid var(--ink); background: #fff; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 0 20px; }
+    header .wrap { display: flex; align-items: baseline; gap: 24px; padding-top: 16px; padding-bottom: 16px; }
+    header h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+    header a { color: var(--ink); text-decoration: none; }
+    nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+    nav a { color: var(--muted); }
+    nav a:hover { color: var(--accent); }
+    main { padding: 28px 0 60px; }
+    h2 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.01em; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 24px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 20px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+    select, input[type=text], input[type=date] {
+      width: 100%; padding: 9px 10px; border: 1px solid #c9c5bd; border-radius: 4px;
+      font-size: 15px; background: #fff; font-family: inherit; }
+    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    button { background: var(--ink); color: #fff; border: 0; border-radius: 4px;
+             padding: 10px 20px; font-size: 15px; font-family: inherit; cursor: pointer; }
+    button:hover { background: var(--accent); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+         color: var(--muted); border-bottom: 1px solid var(--line); padding: 8px 10px 8px 0; }
+    td { padding: 10px 10px 10px 0; border-bottom: 1px solid #f0eeea; vertical-align: top; }
+    .errors { color: var(--accent); font-size: 14px; margin-bottom: 16px; }
+    .pill { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+            padding: 2px 8px; border-radius: 20px; border: 1px solid var(--line); color: var(--muted); }
+    .pill.running, .pill.queued { border-color: var(--warn); color: var(--warn); }
+    .pill.success { border-color: var(--ok); color: var(--ok); }
+    .pill.failed { border-color: var(--accent); color: var(--accent); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header><div class="wrap">
+    <h1><a href="{% url 'facility-list' %}">Arkansas Health Inspections</a></h1>
+    <nav>
+      <a href="{% url 'facility-list' %}">Browse</a>
+      <a href="{% url 'scrape-request' %}">Retrieve data</a>
+      <a href="/admin/">Admin</a>
+    </nav>
+  </div></header>
+  <main class="wrap">{% block content %}{% endblock %}</main>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Browse inspections{% endblock %}
+{% block content %}
+<h2>Food establishments</h2>
+<p class="sub">{{ total }} establishment{{ total|pluralize }} retrieved{% if county %} in {{ county }} County{% endif %}.</p>
+
+<form method="get" class="card" style="margin-bottom:24px">
+  <div class="row">
+    <div>
+      <label for="q">Search</label>
+      <input type="text" name="q" id="q" value="{{ query }}" placeholder="Name or city">
+    </div>
+    <div>
+      <label for="county">County</label>
+      <select name="county" id="county">
+        <option value="">All counties</option>
+        {% for c in counties %}
+          <option value="{{ c }}" {% if c == county %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="display:flex;align-items:flex-end"><button type="submit">Filter</button></div>
+  </div>
+</form>
+
+<table>
+  <tr><th>Establishment</th><th>City</th><th>County</th><th>Latest inspection</th><th>Inspections</th></tr>
+  {% for f in facilities %}
+  <tr>
+    <td><a href="{{ f.get_absolute_url }}">{{ f.name }}</a><br>
+        <span style="color:#888;font-size:12px">{{ f.street }}</span></td>
+    <td>{{ f.city }}</td>
+    <td>{{ f.county }}</td>
+    <td>{{ f.latest_inspection|default:"—" }}</td>
+    <td>{{ f.inspection_count }}</td>
+  </tr>
+  {% empty %}
+  <tr><td colspan="5" style="color:#666;padding:24px 0">
+    Nothing retrieved yet. <a href="{% url 'scrape-request' %}">Retrieve some inspections</a> to get started.
+  </td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

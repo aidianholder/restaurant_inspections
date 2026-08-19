@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ run.county }} retrieval{% endblock %}
+{% block content %}
+<h2>{{ run.county }} County</h2>
+<p class="sub">{{ run.date_from }} to {{ run.date_to }}</p>
+
+<div class="card">
+  <p style="margin:0 0 14px">
+    <span class="pill {{ run.status }}" id="status">{{ run.get_status_display }}</span>
+    <span id="note" style="color:#666;font-size:14px;margin-left:10px">{{ run.progress_note }}</span>
+  </p>
+  <table>
+    <tr><th>Pages</th><th>Facilities</th><th>Inspections</th><th>Observations</th><th>Reports</th></tr>
+    <tr>
+      <td id="pages">{{ run.pages_fetched }}</td>
+      <td id="facilities">{{ run.facilities_created }}</td>
+      <td id="inspections">{{ run.inspections_created }}</td>
+      <td id="violations">{{ run.violations_created }}</td>
+      <td id="reports">{{ run.reports_downloaded }}</td>
+    </tr>
+  </table>
+  <p id="error" class="errors" style="margin-top:14px">{{ run.error }}</p>
+</div>
+
+<p style="margin-top:24px"><a href="{% url 'facility-list' %}?county={{ run.county }}">Browse {{ run.county }} County results →</a></p>
+
+<script>
+  const statusUrl = "{% url 'scrape-status' run.pk %}";
+  function tick() {
+    fetch(statusUrl).then(r => r.json()).then(d => {
+      document.getElementById('status').textContent = d.status_label;
+      document.getElementById('status').className = 'pill ' + d.status;
+      document.getElementById('note').textContent = d.note;
+      for (const k of ['pages','facilities','inspections','violations','reports']) {
+        document.getElementById(k).textContent = d[k];
+      }
+      document.getElementById('error').textContent = d.error || '';
+      if (d.active) setTimeout(tick, 2000);
+    });
+  }
+  {% if run.is_active %}setTimeout(tick, 2000);{% endif %}
+</script>
+{% endblock %}
