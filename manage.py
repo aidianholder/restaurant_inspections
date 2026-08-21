@@ -6,7 +6,11 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+    # Assign rather than setdefault: this server exports a different project's
+    # DJANGO_SETTINGS_MODULE from /root/.bashrc, and setdefault yields to it,
+    # so every manage.py call from an interactive shell died importing settings
+    # that aren't on this project's path. `--settings` still overrides.
+    os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
