@@ -34,6 +34,62 @@ characters by the state, and street/city are run together with inconsistent
 whitespace (parsed by matching against a bundled list of Arkansas place names;
 anything unmatched is flagged `address_needs_review` for review in the admin).
 
+## Scheduled scrapes
+
+Each county can carry a standing instruction to re-scrape itself — cadence, the day
+and time it runs, and how far back it looks. These are `ScrapeSchedule` rows,
+managed in the admin, so adding a county never needs shell access and the schedule
+is visible to anyone who can see the site.
+
+There is no cron entry and no second scheduler. `django-q2` already ships one, and
+the `qcluster` worker already running is what fires it. A single recurring
+dispatcher wakes every few minutes, asks which counties are due, and queues those
+scrapes:
+
+```bash
+.venv/bin/python manage.py install_scheduler --every 10   # once, at deploy
+.venv/bin/python manage.py run_due_scrapes --dry-run      # what would fire now
+.venv/bin/python manage.py run_due_scrapes                # fire it by hand
+```
+
+The dispatcher interval sets worst-case lateness: at ten minutes, a job set for
+2:00am starts by 2:10.
+
+### Lookback must overlap the interval
+
+The setting that matters most, and the one whose failure is invisible. **The state
+backdates.** An inspection can appear online days or weeks after it happened, so a
+weekly job that searches only the last seven days will silently drop records and
+nothing will look wrong.
+
+The model enforces a minimum per cadence — 7 days for daily, 14 weekly, 21
+biweekly, 45 monthly — and refuses a shorter window with an explanation. Overlap
+costs almost nothing: inspections upsert on their natural key, facilities on the
+ADH establishment key, PDFs are content-hashed, and `details_scraped_at` stops
+detail being re-fetched. A re-scraped window writes nothing it already has.
+
+### Not scraping the same county twice at once
+
+A Pulaski month is 147 facilities and hundreds of PDF fetches. If a run is still
+going when the next falls due, the dispatcher skips that county rather than
+doubling the load on the state's server — and advances the schedule anyway, so a
+stuck county can't re-trigger on every tick or build a backlog.
+
+`catch_up` is `False` in `Q_CLUSTER` for the same reason: after downtime you get
+the next scheduled run, not every run you missed firing at once.
+
+### Operational notes
+
+- **Stagger the counties.** If this grows to all 75, don't put them all on the 1st.
+  Two or three a night, overnight, is polite and keeps any single night short.
+- **Watch for failures.** Once embeds are live, a silently failing scheduled scrape
+  means newspapers publish stale data under their own banner. `ScrapeRun` records
+  status and error for every run and the schedule's last result shows in the admin
+  list, but nobody is watching at 2am — alerting on a failed scheduled run is worth
+  adding before the embeds go out.
+- **Supervise the worker.** Nothing fires if `qcluster` is not running. Use systemd
+  with `Restart=always`, and see the migration warning above.
+
 ## Violations come from the PDF, not the website
 
 **The website's "Observations" overlay under-reports violations.** Measured across
@@ -236,6 +292,7 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/scraper/parsers.py` | Pure HTML → dicts; no network, fully testable |
 | `inspections/scraper/report_pdf.py` | Report PDF → violations, via pdfplumber |
 | `inspections/ingest.py` | Drives the scraper, writes to the database |
+| `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
 | `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |

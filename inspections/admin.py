@@ -3,7 +3,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import (
-    Facility, GeocodeSource, Inspection, ScrapeRun, Violation, ViolationItem,
+    Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule, Violation, ViolationItem,
 )
 
 
@@ -86,7 +86,7 @@ class InspectionAdmin(admin.ModelAdmin):
 @admin.register(ScrapeRun)
 class ScrapeRunAdmin(admin.ModelAdmin):
     list_display = (
-        "county", "date_from", "date_to", "status", "pages_fetched",
+        "county", "date_from", "date_to", "status", "schedule", "pages_fetched",
         "facilities_created", "inspections_created", "violations_created",
         "reports_downloaded", "created_at",
     )
@@ -126,3 +126,61 @@ class ViolationItemAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(ScrapeSchedule)
+class ScrapeScheduleAdmin(admin.ModelAdmin):
+    """Per-county standing scrape instructions.
+
+    Editing any timing field clears `next_run_at` so it is recomputed on save —
+    otherwise a schedule moved to a new day would keep its old next occurrence.
+    """
+
+    TIMING_FIELDS = {"cadence", "day_of_week", "day_of_month", "run_at", "is_active"}
+
+    list_display = (
+        "county", "schedule_description", "lookback_days", "is_active",
+        "next_run_at", "last_run_status",
+    )
+    list_filter = ("cadence", "is_active")
+    search_fields = ("county",)
+    readonly_fields = ("next_run_at", "last_queued_at", "last_run", "created_at")
+    actions = ["run_now", "recompute_next_run"]
+
+    @admin.display(description="Last run")
+    def last_run_status(self, obj):
+        if not obj.last_run:
+            return "—"
+        run = obj.last_run
+        colour = {"success": "#1f6f43", "failed": "#8c1d1d"}.get(run.status, "#9a6700")
+        return format_html(
+            '<span style="color:{}">{}</span> {}', colour, run.get_status_display(), run.date_to
+        )
+
+    def save_model(self, request, obj, form, change):
+        if self.TIMING_FIELDS & set(form.changed_data):
+            obj.next_run_at = None      # save() recomputes it
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Run selected schedules now")
+    def run_now(self, request, queryset):
+        from django.utils import timezone
+
+        from .scheduling import dispatch_due_scrapes
+
+        # Pull the chosen schedules forward, then let the normal dispatcher run —
+        # so the in-flight guard and window logic behave exactly as they do at 2am.
+        queryset.update(next_run_at=timezone.now())
+        result = dispatch_due_scrapes()
+        self.message_user(
+            request,
+            f"Queued: {', '.join(result['queued']) or 'none'}. "
+            f"Skipped (already running): {', '.join(result['skipped']) or 'none'}.",
+        )
+
+    @admin.action(description="Recompute next run time")
+    def recompute_next_run(self, request, queryset):
+        for schedule in queryset:
+            schedule.reschedule()
+            schedule.save(update_fields=["next_run_at"])
+        self.message_user(request, f"Rescheduled {queryset.count()}.")

@@ -6,10 +6,13 @@ key only appears on rows that have past inspections), we fall back to a
 normalized name+address fingerprint and adopt the source key later if it shows up.
 """
 
+import datetime
 import hashlib
 import re
 
 from django.contrib.gis.db import models
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.urls import reverse
 from django.utils.text import slugify
 
@@ -260,6 +263,124 @@ class Violation(models.Model):
         return self.item.display_description if self.item_id else ""
 
 
+class ScrapeSchedule(models.Model):
+    """A standing instruction to re-scrape one county on a cadence.
+
+    One row per county. The dispatcher wakes periodically, fires anything whose
+    `next_run_at` has passed, and computes the following occurrence.
+    """
+
+    class Cadence(models.TextChoices):
+        DAILY = "daily", "Every day"
+        WEEKLY = "weekly", "Every week"
+        BIWEEKLY = "biweekly", "Every two weeks"
+        MONTHLY = "monthly", "Every month"
+
+    # Minimum lookback per cadence. The state backdates: an inspection can appear
+    # online days or weeks after it happened, so a window equal to the interval
+    # silently drops records. Overlap is nearly free because ingest is idempotent.
+    MINIMUM_LOOKBACK = {
+        Cadence.DAILY: 7,
+        Cadence.WEEKLY: 14,
+        Cadence.BIWEEKLY: 21,
+        Cadence.MONTHLY: 45,
+    }
+
+    DAYS_OF_WEEK = [
+        (0, "Monday"), (1, "Tuesday"), (2, "Wednesday"), (3, "Thursday"),
+        (4, "Friday"), (5, "Saturday"), (6, "Sunday"),
+    ]
+
+    county = models.CharField(max_length=64, unique=True, choices=COUNTY_CHOICES)
+    cadence = models.CharField(max_length=10, choices=Cadence.choices, default=Cadence.WEEKLY)
+
+    # Which day the run lands on: weekday for weekly/biweekly, date for monthly,
+    # ignored for daily.
+    day_of_week = models.PositiveSmallIntegerField(
+        choices=DAYS_OF_WEEK, null=True, blank=True,
+        help_text="For weekly and biweekly schedules.",
+    )
+    day_of_month = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(28)],
+        help_text="For monthly schedules. Capped at 28 so every month has the date.",
+    )
+    run_at = models.TimeField(
+        default=datetime.time(2, 0),
+        help_text="Local time of day to start. Overnight is kindest to the state's server.",
+    )
+
+    lookback_days = models.PositiveSmallIntegerField(
+        default=30,
+        help_text="How far back each run searches. Must overlap the interval — "
+                  "inspections often appear online well after the date they happened.",
+    )
+
+    is_active = models.BooleanField(default=True)
+    next_run_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_queued_at = models.DateTimeField(null=True, blank=True)
+    last_run = models.ForeignKey(
+        "ScrapeRun", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["county"]
+
+    def __str__(self):
+        return f"{self.county}: {self.get_cadence_display().lower()} ({self.schedule_description})"
+
+    @property
+    def schedule_description(self):
+        time_text = self.run_at.strftime("%-I:%M %p").lower()
+        if self.cadence == self.Cadence.DAILY:
+            return f"daily at {time_text}"
+        if self.cadence in (self.Cadence.WEEKLY, self.Cadence.BIWEEKLY):
+            day = dict(self.DAYS_OF_WEEK).get(self.day_of_week, "?")
+            every = "every" if self.cadence == self.Cadence.WEEKLY else "every other"
+            return f"{every} {day} at {time_text}"
+        return f"day {self.day_of_month} of each month at {time_text}"
+
+    @property
+    def minimum_lookback(self):
+        return self.MINIMUM_LOOKBACK.get(self.cadence, 14)
+
+    def clean(self):
+        errors = {}
+        if self.cadence in (self.Cadence.WEEKLY, self.Cadence.BIWEEKLY) and self.day_of_week is None:
+            errors["day_of_week"] = "Choose a day of the week for this cadence."
+        if self.cadence == self.Cadence.MONTHLY and self.day_of_month is None:
+            errors["day_of_month"] = "Choose a day of the month for this cadence."
+        if self.lookback_days and self.lookback_days < self.minimum_lookback:
+            errors["lookback_days"] = (
+                f"Use at least {self.minimum_lookback} days for this cadence. The state "
+                f"publishes inspections days or weeks after they happen, so a window that "
+                f"only just covers the interval will silently miss records. Re-scraping an "
+                f"overlapping window is cheap — nothing is stored twice."
+            )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.next_run_at is None:
+            from .scheduling import compute_next_run
+
+            self.next_run_at = compute_next_run(self)
+        super().save(*args, **kwargs)
+
+    def reschedule(self, after=None):
+        """Recompute the next occurrence, e.g. after the timing fields change."""
+        from .scheduling import compute_next_run
+
+        self.next_run_at = compute_next_run(self, after=after)
+        return self.next_run_at
+
+    def window_for(self, run_date):
+        """The date range a run started on `run_date` should request."""
+        return run_date - datetime.timedelta(days=self.lookback_days), run_date
+
+
 class ScrapeRun(models.Model):
     """One user-triggered retrieval: a county plus a date range."""
 
@@ -272,6 +393,11 @@ class ScrapeRun(models.Model):
     county = models.CharField(max_length=64, choices=COUNTY_CHOICES)
     date_from = models.DateField()
     date_to = models.DateField()
+
+    # Set when a run was queued by a schedule rather than by hand.
+    schedule = models.ForeignKey(
+        ScrapeSchedule, on_delete=models.SET_NULL, null=True, blank=True, related_name="runs"
+    )
 
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.QUEUED)
     task_id = models.CharField(max_length=64, blank=True)
