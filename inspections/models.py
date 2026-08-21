@@ -263,6 +263,106 @@ class Violation(models.Model):
         return self.item.display_description if self.item_id else ""
 
 
+class Embed(models.Model):
+    """A configured table for a newspaper to embed.
+
+    One row per embed. The newsroom pastes a one-line snippet; everything about
+    what the table shows lives here, so it can be changed centrally without anyone
+    touching their CMS.
+    """
+
+    class Sort(models.TextChoices):
+        DATE_DESC = "date_desc", "Date, newest first"
+        DATE_ASC = "date_asc", "Date, oldest first"
+        NAME_ASC = "name_asc", "Facility name, A–Z"
+        VIOLATIONS_DESC = "violations_desc", "Most violations first"
+
+    slug = models.SlugField(max_length=80, unique=True, help_text="Appears in the embed URL.")
+    publication = models.CharField(
+        max_length=120, blank=True, help_text="Which paper this is for. Internal only."
+    )
+    county = models.CharField(max_length=64, choices=COUNTY_CHOICES)
+
+    # Rolling window by default: a fixed range goes stale the day after it's set
+    # and nobody notices for months.
+    window_days = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=30,
+        help_text="Rolling window, e.g. 30 for 'the last 30 days'. Leave blank to use fixed dates.",
+    )
+    date_from = models.DateField(null=True, blank=True, help_text="Fixed range, for a specific story.")
+    date_to = models.DateField(null=True, blank=True)
+
+    title_override = models.CharField(
+        max_length=200, blank=True,
+        help_text="Replaces the automatic '<County> County Health Inspections' heading.",
+    )
+    rows_per_page = models.PositiveSmallIntegerField(
+        default=20, help_text="0 shows every row without paging."
+    )
+    row_limit = models.PositiveSmallIntegerField(
+        default=500,
+        help_text="Hard cap on rows sent to the browser. Paging and sorting happen "
+                  "in the reader's browser, which stops being viable past ~1000.",
+    )
+    default_sort = models.CharField(max_length=20, choices=Sort.choices, default=Sort.DATE_DESC)
+    search_enabled = models.BooleanField(
+        default=True, help_text="Searches facility name and address/city."
+    )
+    show_report_links = models.BooleanField(
+        default=True, help_text="Link each inspection to its source PDF."
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Switching this off blanks the embed everywhere it appears, "
+                  "without anyone editing their CMS.",
+    )
+    notes = models.TextField(blank=True, help_text="Internal only.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["county", "slug"]
+
+    def __str__(self):
+        return f"{self.slug} ({self.county})"
+
+    def clean(self):
+        has_fixed = bool(self.date_from or self.date_to)
+        if self.window_days and has_fixed:
+            raise ValidationError(
+                "Use either a rolling window or a fixed date range, not both."
+            )
+        if not self.window_days and not (self.date_from and self.date_to):
+            raise ValidationError(
+                "Set a rolling window, or both a start and end date."
+            )
+        if self.date_from and self.date_to and self.date_from > self.date_to:
+            raise ValidationError({"date_to": "The end date must fall after the start date."})
+
+    def resolved_window(self, today=None):
+        """The dates this embed covers right now."""
+        if self.window_days:
+            today = today or datetime.date.today()
+            return today - datetime.timedelta(days=self.window_days), today
+        return self.date_from, self.date_to
+
+    @property
+    def heading(self):
+        return self.title_override or f"{self.county} County Health Inspections"
+
+    def date_range_label(self, today=None):
+        start, end = self.resolved_window(today)
+        if start.year == end.year:
+            if start.month == end.month:
+                return f"{start:%B %-d}–{end:%-d, %Y}"
+            return f"{start:%B %-d} – {end:%B %-d, %Y}"
+        return f"{start:%B %-d, %Y} – {end:%B %-d, %Y}"
+
+    def get_absolute_url(self):
+        return reverse("embed-page", args=[self.slug])
+
+
 class ScrapeSchedule(models.Model):
     """A standing instruction to re-scrape one county on a cadence.
 

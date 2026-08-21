@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{{ embed.heading }}</title>
+<style>html,body{margin:0;padding:0;background:transparent}</style>
+</head>
+<body>
+<!-- This embed has been switched off at the source. Rendering blank rather than an
+     error page so a live article degrades to empty space. -->
+<script>try{parent.postMessage({embed:"{{ embed.slug|escapejs }}",type:"height",height:0},"*")}catch(e){}</script>
+</body></html>

@@ -1,10 +1,15 @@
 from django.contrib.gis import admin
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import (
-    Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule, Violation, ViolationItem,
+    Embed, Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule, Violation,
+    ViolationItem,
 )
+
+admin.site.site_header = "AR Health Inspections"
+admin.site.site_title = "AR Health Inspections"
 
 
 class InspectionInline(admin.TabularInline):
@@ -184,3 +189,74 @@ class ScrapeScheduleAdmin(admin.ModelAdmin):
             schedule.reschedule()
             schedule.save(update_fields=["next_run_at"])
         self.message_user(request, f"Rescheduled {queryset.count()}.")
+
+
+@admin.register(Embed)
+class EmbedAdmin(admin.ModelAdmin):
+    """The whole configuration surface for embeds, for now.
+
+    A newsroom asks for a county; you fill this in and send them the snippet. No
+    file, no template, no deploy — the public view reads this row at request time.
+    """
+
+    list_display = ("slug", "publication", "county", "window_label", "rows_per_page", "is_active")
+    list_filter = ("is_active", "county", "publication")
+    search_fields = ("slug", "publication", "county", "notes")
+    readonly_fields = ("embed_snippets", "created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("slug", "publication", "county", "is_active")}),
+        ("What it covers", {
+            "fields": ("window_days", "date_from", "date_to"),
+            "description": "Use a rolling window wherever possible — a fixed range is "
+                           "stale the day after you set it, and nobody notices for months.",
+        }),
+        ("Presentation", {
+            "fields": ("title_override", "default_sort", "rows_per_page", "row_limit",
+                       "search_enabled", "show_report_links"),
+        }),
+        ("Give this to the newsroom", {"fields": ("embed_snippets",)}),
+        ("Internal", {"fields": ("notes", "created_at", "updated_at")}),
+    )
+
+    @admin.display(description="Covers")
+    def window_label(self, obj):
+        if obj.window_days:
+            return f"last {obj.window_days} days"
+        return f"{obj.date_from} – {obj.date_to}"
+
+    @admin.display(description="Embed code")
+    def embed_snippets(self, obj):
+        if not obj.pk:
+            return "Save the embed first, then the snippets appear here."
+
+        # Built from the current request so the host is right in every environment.
+        request = getattr(self, "_request", None)
+        page_url = obj.get_absolute_url()
+        loader_url = reverse("embed-loader", args=[obj.slug])
+        if request is not None:
+            page_url = request.build_absolute_uri(page_url)
+            loader_url = request.build_absolute_uri(loader_url)
+
+        script_tag = f'<script src="{loader_url}" async></script>'
+        iframe_tag = (
+            f'<iframe src="{page_url}" title="{obj.heading}" '
+            f'style="width:100%;border:0;height:900px" scrolling="no"></iframe>'
+        )
+        box = ("width:100%;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;"
+               "padding:8px;border:1px solid #b8b3ac;border-radius:4px;"
+               # Both colours pinned: inheriting either one leaves the snippet
+               # unreadable under the admin's dark theme.
+               "background:#fbfaf8;color:#1a1a1a")
+        return format_html(
+            '<p style="margin:0 0 4px"><strong>Script tag</strong> — preferred; resizes itself.</p>'
+            '<textarea readonly rows="2" style="{}" onclick="this.select()">{}</textarea>'
+            '<p style="margin:12px 0 4px"><strong>Plain iframe</strong> — for a CMS that strips '
+            '&lt;script&gt;. Fixed height, so it may scroll internally.</p>'
+            '<textarea readonly rows="3" style="{}" onclick="this.select()">{}</textarea>'
+            '<p style="margin:12px 0 0"><a href="{}" target="_blank" rel="noopener">Preview this embed →</a></p>',
+            box, script_tag, box, iframe_tag, page_url,
+        )
+
+    def get_form(self, request, obj=None, **kwargs):
+        self._request = request        # so snippets can carry an absolute URL
+        return super().get_form(request, obj, **kwargs)

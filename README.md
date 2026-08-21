@@ -34,6 +34,50 @@ characters by the state, and street/city are run together with inconsistent
 whitespace (parsed by matching against a bundled list of Arkansas place names;
 anything unmatched is flagged `address_needs_review` for review in the admin).
 
+## Embeds
+
+Newspapers embed a live table with one line. Everything about what it shows lives
+in an `Embed` row in the admin, so a change propagates to every paper without
+anyone touching their CMS.
+
+```
+<script src="https://ourdomain/embed/pulaski-monthly.js" async></script>
+```
+
+That injects an iframe pointing at `/embed/<slug>/`, a server-rendered,
+self-contained, cached HTML document, and keeps its height in step via
+`postMessage`. A plain `<iframe>` snippet is generated too, for a CMS that strips
+`<script>`. Both appear on the embed's admin page alongside a preview link.
+
+Nothing exists per embed except a database row — one view, one template, the same
+way `facility_detail` serves every facility. See
+[`iframe_display.md`](iframe_display.md) for the full design and the reasoning.
+
+### How it behaves
+
+Under 600px each inspection is a card (name and address, violation count, then
+date and type with a caret); at 600px and up it becomes a conventional table. A row
+expands in place to show every violation — short description, priority, the
+inspector's notes — ending in a link to the source PDF. A clean inspection still
+expands, so the report is always reachable.
+
+Paging, search and sort all happen **in the reader's browser**. A Pulaski
+county-month is 167 inspections and 302 violations: 144 KB of HTML, 20 KB gzipped,
+including every detail panel. Shipping it all keeps the embed a single cacheable
+document, where server-side paging would make the cache key page × sort × search
+and send a long tail of misses to Django.
+
+### Two things that are easy to get wrong
+
+- **`X-Frame-Options`.** Django sends `DENY` by default, which silently breaks
+  every embed. The embed view is exempt; the loader verifies `event.origin` so only
+  its own iframe can drive the height.
+- **Measure the content, not the document.** `documentElement.scrollHeight` is
+  forced up by the iframe's own height, so an embed measured that way grows but
+  never shrinks when a reader collapses a row. The page measures its content
+  wrapper instead, and posts immediately rather than only inside
+  `requestAnimationFrame`, which never runs while a tab is in the background.
+
 ## Scheduled scrapes
 
 Each county can carry a standing instruction to re-scrape itself — cadence, the day
@@ -293,6 +337,7 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/scraper/report_pdf.py` | Report PDF → violations, via pdfplumber |
 | `inspections/ingest.py` | Drives the scraper, writes to the database |
 | `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
+| `inspections/embed_views.py` | Public embed page and loader script |
 | `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |

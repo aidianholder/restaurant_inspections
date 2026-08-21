@@ -91,6 +91,19 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Rendered embeds are cached, and the cache must be shared across processes:
+# the default LocMemCache gives every worker its own copy, so embeds would serve
+# inconsistently and could not be invalidated. Postgres is already here and the
+# volume is tiny (one row per embed), so use the database rather than adding Redis.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+        "TIMEOUT": 900,
+        "OPTIONS": {"MAX_ENTRIES": 5000},
+    }
+}
+
 # django-q2 using the Postgres database as its broker: no Redis, no extra service.
 Q_CLUSTER = {
     "name": "health_inspections",

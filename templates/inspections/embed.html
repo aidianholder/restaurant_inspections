@@ -1,0 +1,388 @@
+{% load tz %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ embed.heading }}</title>
+<style>
+  /* Self-contained by necessity: a strict host page may block anything external,
+     and the iframe means none of this can leak into or out of the newspaper. */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #1a1a1a; background: #fff; -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 4px 12px 16px; }
+
+  header h1 { font-size: 1.15rem; margin: 8px 0 2px; letter-spacing: -0.01em; }
+  header .range { margin: 0 0 12px; color: #666; font-size: 0.8rem; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .controls input[type=search] {
+    flex: 1 1 180px; min-width: 0; padding: 8px 10px; font: inherit; font-size: 0.9rem;
+    border: 1px solid #ccc8c2; border-radius: 4px; background: #fff; color: inherit;
+  }
+  .sortwrap { font-size: 0.8rem; color: #666; display: flex; align-items: center; gap: 6px; }
+  .sortwrap select { font: inherit; font-size: 0.85rem; padding: 7px 8px;
+                     border: 1px solid #ccc8c2; border-radius: 4px; background: #fff; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: none; }                    /* restored at >=600px */
+  tbody.row { border-bottom: 1px solid #e8e5e0; }
+  tbody.row.is-hidden { display: none; }
+
+  /* --- Under 600px: each inspection is a card -------------------------------
+     name          count
+     address       count
+     date   type   chevron                                                    */
+  tr.summary {
+    display: grid; width: 100%; cursor: pointer; -webkit-user-select: none; user-select: none;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: "name name count" "addr addr count" "date type chev";
+    column-gap: 8px; padding: 11px 0 10px;
+  }
+  tr.summary:hover { background: #fbfaf8; }
+  td { padding: 0; vertical-align: middle; }
+  td.name  { grid-area: name; font-weight: 600; font-size: 1.02rem; line-height: 1.25; }
+  td.addr  { grid-area: addr; font-size: 0.66rem; color: #7a756e; line-height: 1.3; padding-top: 1px; }
+  td.date  { grid-area: date; font-size: 0.82rem; color: #444; padding-top: 7px; white-space: nowrap; }
+  td.type  { grid-area: type; font-size: 0.82rem; color: #444; padding-top: 7px; padding-left: 10px; }
+  td.count { grid-area: count; text-align: right; align-self: center; white-space: nowrap; }
+  td.chev  { grid-area: chev; text-align: right; padding-top: 5px; }
+
+  .n { font-size: 1.15rem; font-weight: 700; line-height: 1; }
+  .n.zero { color: #9a958d; font-weight: 500; }
+  .nlabel { display: block; font-size: 0.6rem; color: #7a756e; text-transform: uppercase;
+            letter-spacing: .04em; margin-top: 2px; }
+
+  .toggle { background: none; border: 0; padding: 4px; cursor: pointer; color: #8c1d1d;
+            line-height: 0; border-radius: 3px; }
+  .toggle:focus-visible { outline: 2px solid #8c1d1d; outline-offset: 2px; }
+  .toggle svg { transition: transform .15s ease; }
+  .toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+
+  tr.detail { display: block; }
+  tr.detail[hidden] { display: none; }
+  tr.detail > td { display: block; padding: 2px 0 16px; }
+  .panel { background: #faf9f7; border-left: 3px solid #d8d3cc; padding: 12px 14px; border-radius: 0 4px 4px 0; }
+  .v + .v { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ebe8e3; }
+  .v h3 { margin: 0; font-size: 0.92rem; font-weight: 600; }
+  .v .meta { margin: 3px 0 5px; font-size: 0.7rem; color: #7a756e; }
+  .v p { margin: 0; font-size: 0.85rem; }
+  .v .by { margin-top: 4px; font-size: 0.7rem; color: #7a756e; }
+  .lvl { display: inline-block; font-size: 0.62rem; font-weight: 700; letter-spacing: .04em;
+         padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor; margin-left: 4px; }
+  .lvl.P  { color: #8c1d1d; } .lvl.PF { color: #9a6700; } .lvl.C { color: #7a756e; }
+  .none { margin: 0; font-size: 0.85rem; color: #4a6f57; }
+  .report { display: inline-block; margin-top: 12px; font-size: 0.82rem; font-weight: 600; color: #8c1d1d; }
+
+  .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; }
+  .pager button { font: inherit; font-size: 0.82rem; padding: 7px 14px; border: 1px solid #ccc8c2;
+                  background: #fff; border-radius: 4px; cursor: pointer; color: inherit; }
+  .pager button:disabled { opacity: .4; cursor: default; }
+  .pager .at { font-size: 0.78rem; color: #666; }
+  .empty { padding: 22px 0; color: #666; font-size: 0.9rem; text-align: center; }
+
+  footer { margin-top: 16px; padding-top: 10px; border-top: 1px solid #e8e5e0;
+           font-size: 0.68rem; color: #8a857e; }
+  footer a { color: #8a857e; }
+
+  /* --- 600px and up: a conventional table ---------------------------------- */
+  @media (min-width: 600px) {
+    thead { display: table-header-group; }
+    thead th { text-align: left; font-size: 0.66rem; text-transform: uppercase; letter-spacing: .05em;
+               color: #7a756e; font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid #d8d3cc; }
+    thead th.sortable { cursor: pointer; user-select: none; }
+    thead th.sortable:hover { color: #8c1d1d; }
+    thead th .arrow { opacity: 0; font-size: 0.7rem; }
+    thead th[aria-sort] .arrow { opacity: 1; }
+    tr.summary { display: table-row; padding: 0; }
+    td { display: table-cell; padding: 11px 10px 11px 0; vertical-align: middle; }
+    td.name { font-size: 0.92rem; width: 26%; }
+    td.addr { font-size: 0.72rem; width: 26%; padding-top: 11px; }
+    td.date, td.type { font-size: 0.85rem; padding-top: 11px; white-space: nowrap; }
+    td.count { text-align: center; width: 78px; }
+    td.chev { width: 34px; }
+    .n { font-size: 1rem; }
+    .nlabel { display: none; }
+    tr.detail { display: table-row; }
+    tr.detail > td { display: table-cell; padding: 0 0 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .toggle svg { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>{{ embed.heading }}</h1>
+    <p class="range">{{ date_range }}</p>
+  </header>
+
+  <div class="controls">
+    {% if embed.search_enabled %}
+      <label for="q" class="sr-only" style="position:absolute;left:-9999px">Search by facility name or address</label>
+      <input type="search" id="q" placeholder="Search name or address" autocomplete="off">
+    {% endif %}
+    <label class="sortwrap" for="sort">Sort
+      <select id="sort">
+        <option value="date:desc">Date, newest</option>
+        <option value="date:asc">Date, oldest</option>
+        <option value="name:asc">Name, A–Z</option>
+        <option value="viol:desc">Most violations</option>
+      </select>
+    </label>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="sortable" data-key="name" scope="col">Facility <span class="arrow"></span></th>
+        <th scope="col">Address</th>
+        <th class="sortable" data-key="date" scope="col">Date <span class="arrow"></span></th>
+        <th scope="col">Type</th>
+        <th class="sortable" data-key="viol" scope="col">Violations <span class="arrow"></span></th>
+        <th scope="col"><span style="position:absolute;left:-9999px">Details</span></th>
+      </tr>
+    </thead>
+    {% for row in rows %}
+    <tbody class="row" data-name="{{ row.sort_name }}" data-date="{{ row.sort_date }}"
+           data-viol="{{ row.violation_count }}" data-search="{{ row.search_blob }}">
+      <tr class="summary">
+        <td class="name">{{ row.facility.name }}</td>
+        <td class="addr">{{ row.facility.street }}{% if row.facility.city %}, {{ row.facility.city }}{% endif %}</td>
+        <td class="date">{{ row.inspection.date|date:"M j, Y" }}</td>
+        <td class="type">{{ row.inspection.inspection_type }}</td>
+        <td class="count">
+          <span class="n{% if not row.violation_count %} zero{% endif %}">{{ row.violation_count }}</span>
+          <span class="nlabel">violation{{ row.violation_count|pluralize }}</span>
+        </td>
+        <td class="chev">
+          <button class="toggle" type="button" aria-expanded="false" aria-controls="d{{ forloop.counter }}">
+            <span style="position:absolute;left:-9999px">Show violation details for {{ row.facility.name }}</span>
+            <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </td>
+      </tr>
+      <tr class="detail" id="d{{ forloop.counter }}" hidden>
+        <td colspan="6">
+          <div class="panel">
+            {% for v in row.violations %}
+              <div class="v">
+                <h3>{{ v.short_description|default:"Violation" }}{% if v.priority_level %}<span class="lvl {{ v.priority_level }}" title="{{ v.get_priority_level_display }}">{{ v.priority_level }}</span>{% endif %}</h3>
+                <p class="meta">{% if v.item_number %}Item {{ v.item_number }}{% endif %}{% if v.item_number and v.code %} · {% endif %}{{ v.code }}</p>
+                <p>{{ v.inspector_comments }}</p>
+                {% if v.correct_by %}<p class="by">Correct by {{ v.correct_by|date:"M j, Y" }}</p>{% endif %}
+              </div>
+            {% empty %}
+              <p class="none">No violations were recorded on this inspection.</p>
+            {% endfor %}
+            {% if embed.show_report_links and row.inspection.report_pdf %}
+              <a class="report" href="{{ row.inspection.report_pdf.url }}" target="_blank" rel="noopener">Read the full report →</a>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+    </tbody>
+    {% endfor %}
+  </table>
+
+  <p class="empty" id="empty" hidden>No inspections match that search.</p>
+
+  <nav class="pager" id="pager" aria-label="Table pages">
+    <button type="button" id="prev">← Back</button>
+    <span class="at" id="at"></span>
+    <button type="button" id="next">Next →</button>
+  </nav>
+  <p aria-live="polite" style="position:absolute;left:-9999px" id="announce"></p>
+
+  <footer>
+    {{ total_rows }} inspection{{ total_rows|pluralize }} · Data current as of
+    {{ generated_at|date:"M j, Y" }} · Source: Arkansas Department of Health
+  </footer>
+</div>
+
+<script>
+(function () {
+  var SLUG = "{{ embed.slug|escapejs }}";
+  var PER = {{ rows_per_page }};
+  var rows = [].slice.call(document.querySelectorAll("tbody.row"));
+  var pager = document.getElementById("pager");
+  var prev = document.getElementById("prev"), next = document.getElementById("next");
+  var at = document.getElementById("at"), empty = document.getElementById("empty");
+  var announce = document.getElementById("announce");
+  var search = document.getElementById("q"), sortSel = document.getElementById("sort");
+  var DEFAULT = {
+    date_desc: ["date", "desc"], date_asc: ["date", "asc"],
+    name_asc: ["name", "asc"], violations_desc: ["viol", "desc"]
+  }["{{ embed.default_sort|escapejs }}"] || ["date", "desc"];
+  var state = { page: 1, key: DEFAULT[0], dir: DEFAULT[1], q: "" };
+
+  function value(tb, key) {
+    if (key === "viol") return parseInt(tb.dataset.viol, 10);
+    return tb.dataset[key] || "";
+  }
+
+  function matching() {
+    if (!state.q) return rows;
+    var q = state.q;
+    return rows.filter(function (tb) { return tb.dataset.search.indexOf(q) !== -1; });
+  }
+
+  function sorted(list) {
+    var k = state.key, sign = state.dir === "asc" ? 1 : -1;
+    return list.slice().sort(function (a, b) {
+      var x = value(a, k), y = value(b, k);
+      if (x < y) return -1 * sign;
+      if (x > y) return 1 * sign;
+      // Same key: fall back to date then name so ordering never wobbles.
+      var d = a.dataset.date < b.dataset.date ? 1 : a.dataset.date > b.dataset.date ? -1 : 0;
+      return d || (a.dataset.name < b.dataset.name ? -1 : 1);
+    });
+  }
+
+  function collapseAll() {
+    rows.forEach(function (tb) {
+      var btn = tb.querySelector(".toggle"), panel = tb.querySelector(".detail");
+      if (btn) { btn.setAttribute("aria-expanded", "false"); }
+      if (panel) { panel.hidden = true; }
+    });
+  }
+
+  function render(announceCount) {
+    var list = sorted(matching());
+    var per = PER > 0 ? PER : list.length || 1;
+    var pages = Math.max(1, Math.ceil(list.length / per));
+    if (state.page > pages) state.page = pages;
+
+    var start = (state.page - 1) * per, end = start + per;
+    rows.forEach(function (tb) { tb.classList.add("is-hidden"); });
+    var table = rows.length ? rows[0].parentNode : null;
+    list.forEach(function (tb, i) {
+      if (i >= start && i < end) tb.classList.remove("is-hidden");
+      if (table) table.appendChild(tb);     // reorder in place
+    });
+
+    empty.hidden = list.length !== 0;
+    pager.style.display = (PER > 0 && pages > 1) ? "flex" : "none";
+    prev.disabled = state.page <= 1;
+    next.disabled = state.page >= pages;
+    at.textContent = "Page " + state.page + " of " + pages;
+    if (announceCount) {
+      announce.textContent = list.length + " inspection" + (list.length === 1 ? "" : "s") + " found.";
+    }
+    postHeight();
+  }
+
+  var wrap = document.querySelector(".wrap");
+  var lastSent = -1;
+
+  function measure() {
+    // Measure the content wrapper, never documentElement.scrollHeight: the latter
+    // is forced up by the iframe's own height, so the embed would grow but never
+    // shrink when a row collapses or a search narrows the list.
+    return Math.ceil(wrap.getBoundingClientRect().height + wrap.offsetTop + 12);
+  }
+
+  function send() {
+    var h = measure();
+    if (h === lastSent) return;          // don't spam the host with no-op messages
+    lastSent = h;
+    try { parent.postMessage({ embed: SLUG, type: "height", height: h }, "*"); } catch (e) {}
+  }
+
+  function postHeight() {
+    // Send immediately — requestAnimationFrame does not run while the document is
+    // hidden, and articles are routinely opened in a background tab.
+    send();
+    if (window.requestAnimationFrame) {
+      requestAnimationFrame(function () { requestAnimationFrame(send); });
+    }
+  }
+
+  if (window.ResizeObserver) {
+    // Catches anything the explicit calls miss: font loading, reflow, late images.
+    new ResizeObserver(send).observe(wrap);
+  }
+  document.addEventListener("visibilitychange", postHeight);
+
+  rows.forEach(function (tb) {
+    var summary = tb.querySelector(".summary");
+    var btn = tb.querySelector(".toggle");
+    var panel = tb.querySelector(".detail");
+    if (!summary || !btn || !panel) return;
+    function toggle() {
+      var open = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", open ? "false" : "true");
+      panel.hidden = open;
+      postHeight();
+    }
+    // The whole summary is the tap target — a caret alone is a poor one on a phone.
+    summary.addEventListener("click", function (e) {
+      if (e.target.closest("a")) return;
+      if (e.target.closest(".toggle")) return;      // the button fires its own
+      toggle();
+    });
+    btn.addEventListener("click", function (e) { e.stopPropagation(); toggle(); });
+  });
+
+  if (search) {
+    var timer;
+    search.addEventListener("input", function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        state.q = search.value.trim().toLowerCase();
+        state.page = 1;              // a match on row 140 must surface from page 1
+        collapseAll();
+        render(true);
+      }, 140);
+    });
+  }
+
+  sortSel.value = state.key + ":" + state.dir;
+  sortSel.addEventListener("change", function () {
+    var parts = sortSel.value.split(":");
+    state.key = parts[0]; state.dir = parts[1]; state.page = 1;
+    collapseAll(); markHeaders(); render(false);
+  });
+
+  function markHeaders() {
+    [].forEach.call(document.querySelectorAll("thead th.sortable"), function (th) {
+      if (th.dataset.key === state.key) {
+        th.setAttribute("aria-sort", state.dir === "asc" ? "ascending" : "descending");
+        th.querySelector(".arrow").textContent = state.dir === "asc" ? "▲" : "▼";
+      } else {
+        th.removeAttribute("aria-sort");
+        th.querySelector(".arrow").textContent = "";
+      }
+    });
+    sortSel.value = state.key + ":" + state.dir;
+  }
+
+  [].forEach.call(document.querySelectorAll("thead th.sortable"), function (th) {
+    th.addEventListener("click", function () {
+      var key = th.dataset.key;
+      if (state.key === key) { state.dir = state.dir === "asc" ? "desc" : "asc"; }
+      else { state.key = key; state.dir = (key === "name") ? "asc" : "desc"; }
+      state.page = 1; collapseAll(); markHeaders(); render(false);
+    });
+  });
+
+  prev.addEventListener("click", function () {
+    if (state.page > 1) { state.page--; collapseAll(); render(false); }
+  });
+  next.addEventListener("click", function () {
+    state.page++; collapseAll(); render(false);
+  });
+
+  window.addEventListener("resize", postHeight);
+  window.addEventListener("load", postHeight);
+  markHeaders();
+  render(false);
+})();
+</script>
+</body>
+</html>
