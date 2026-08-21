@@ -43,6 +43,16 @@
     .pill.success { border-color: var(--ok); color: var(--ok); }
     .pill.failed { border-color: var(--accent); color: var(--accent); }
     a { color: var(--accent); }
+    /* Violation priority counts: P (most serious) through C (least). */
+    .lvl { display: inline-block; min-width: 24px; text-align: center; font-size: 12px;
+           font-variant-numeric: tabular-nums; padding: 2px 5px; border-radius: 3px;
+           border: 1px solid var(--line); color: var(--muted); background: #fff; }
+    .lvl.p  { border-color: var(--accent); color: #fff; background: var(--accent); font-weight: 600; }
+    .lvl.pf { border-color: var(--accent); color: var(--accent); }
+    .lvl.c  { border-color: var(--line); color: var(--muted); }
+    /* A zero must never be the loudest thing in the row — emphasis is reserved
+       for counts that actually exist. */
+    .lvl.zero { border-color: #ebe8e3; background: #fff; color: #c4c0b9; font-weight: 400; }
   </style>
 </head>
 <body>

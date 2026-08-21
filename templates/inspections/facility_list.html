@@ -2,41 +2,86 @@
 {% block title %}Browse inspections{% endblock %}
 {% block content %}
 <h2>Food establishments</h2>
-<p class="sub">{{ total }} establishment{{ total|pluralize }} retrieved{% if county %} in {{ county }} County{% endif %}.</p>
+<p class="sub">
+  {{ total }} establishment{{ total|pluralize }}
+  {% if form.is_filtered %}matching your filters{% else %}retrieved{% endif %}.
+</p>
 
 <form method="get" class="card" style="margin-bottom:24px">
+  {% if form.non_field_errors %}<div class="errors">{{ form.non_field_errors }}</div>{% endif %}
   <div class="row">
     <div>
-      <label for="q">Search</label>
-      <input type="text" name="q" id="q" value="{{ query }}" placeholder="Name or city">
+      <label for="{{ form.q.id_for_label }}">Search</label>
+      {{ form.q }}
     </div>
     <div>
-      <label for="county">County</label>
-      <select name="county" id="county">
-        <option value="">All counties</option>
-        {% for c in counties %}
-          <option value="{{ c }}" {% if c == county %}selected{% endif %}>{{ c }}</option>
-        {% endfor %}
-      </select>
+      <label for="{{ form.county.id_for_label }}">County</label>
+      {{ form.county }}
     </div>
-    <div style="display:flex;align-items:flex-end"><button type="submit">Filter</button></div>
+    <div>
+      <label for="{{ form.date_from.id_for_label }}">Last inspected from</label>
+      {{ form.date_from }}
+      {% if form.date_from.errors %}<div class="errors">{{ form.date_from.errors }}</div>{% endif %}
+    </div>
+    <div>
+      <label for="{{ form.date_to.id_for_label }}">Last inspected to</label>
+      {{ form.date_to }}
+      {% if form.date_to.errors %}<div class="errors">{{ form.date_to.errors }}</div>{% endif %}
+    </div>
   </div>
+  <p style="margin:16px 0 0;display:flex;align-items:center;gap:14px">
+    <button type="submit">Filter</button>
+    {% if form.is_filtered %}
+      <a href="{% url 'facility-list' %}" style="font-size:14px">Clear filters</a>
+    {% endif %}
+    <span style="color:#888;font-size:13px;margin-left:auto">
+      Dates match each establishment's most recent inspection. Either date may be left blank.
+    </span>
+  </p>
 </form>
 
 <table>
-  <tr><th>Establishment</th><th>City</th><th>County</th><th>Latest inspection</th><th>Inspections</th></tr>
+  <tr>
+    <th>Establishment</th>
+    <th>City</th>
+    <th>County</th>
+    <th>Latest inspection</th>
+    <th title="Violations on the most recent inspection, by priority level">Violations (P / PF / C)</th>
+    <th>All inspections</th>
+  </tr>
   {% for f in facilities %}
   <tr>
     <td><a href="{{ f.get_absolute_url }}">{{ f.name }}</a><br>
         <span style="color:#888;font-size:12px">{{ f.street }}</span></td>
     <td>{{ f.city }}</td>
     <td>{{ f.county }}</td>
-    <td>{{ f.latest_inspection|default:"—" }}</td>
+    <td>{{ f.latest_inspection|default:"—" }}
+      {% if f.latest_inspection_type %}
+        <br><span class="pill">{{ f.latest_inspection_type }}</span>
+      {% endif %}
+    </td>
+    <td>
+      {% if f.latest_violation_total %}
+        <span class="lvl p{% if not f.latest_priority %} zero{% endif %}"
+              title="Priority: directly contributes to foodborne illness">{{ f.latest_priority }}</span>
+        <span class="lvl pf{% if not f.latest_priority_foundation %} zero{% endif %}"
+              title="Priority Foundation: supports a priority item">{{ f.latest_priority_foundation }}</span>
+        <span class="lvl c{% if not f.latest_core %} zero{% endif %}"
+              title="Core: general sanitation and maintenance">{{ f.latest_core }}</span>
+      {% else %}
+        <span style="color:#1f6f43">None</span>
+      {% endif %}
+    </td>
     <td>{{ f.inspection_count }}</td>
   </tr>
   {% empty %}
-  <tr><td colspan="5" style="color:#666;padding:24px 0">
-    Nothing retrieved yet. <a href="{% url 'scrape-request' %}">Retrieve some inspections</a> to get started.
+  <tr><td colspan="6" style="color:#666;padding:24px 0">
+    {% if form.is_filtered %}
+      No establishments match those filters.
+      <a href="{% url 'facility-list' %}">Clear them</a> to see everything.
+    {% else %}
+      Nothing retrieved yet. <a href="{% url 'scrape-request' %}">Retrieve some inspections</a> to get started.
+    {% endif %}
   </td></tr>
   {% endfor %}
 </table>

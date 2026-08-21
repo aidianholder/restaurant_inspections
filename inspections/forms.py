@@ -40,3 +40,49 @@ class ScrapeRequestForm(forms.ModelForm):
             if start > dt.date.today():
                 raise forms.ValidationError("The start date is in the future.")
         return cleaned
+
+
+class FacilityFilterForm(forms.Form):
+    """Filters for the browse view. Every field is optional.
+
+    The date range targets each facility's *most recent* inspection, so it answers
+    "who was last inspected in this window" rather than "who has any inspection in
+    it". Either bound may be given on its own.
+    """
+
+    q = forms.CharField(
+        required=False,
+        label="Search",
+        widget=forms.TextInput(attrs={"placeholder": "Name or city"}),
+    )
+    # A plain CharField with a Select widget, deliberately: restricting valid
+    # values to counties currently in the database would make a bookmarked
+    # ?county=X invalid once X's data is gone, and an invalid field would drop
+    # the *other* filters too. An unknown county should return nothing, not
+    # everything.
+    county = forms.CharField(required=False, widget=forms.Select(choices=[]))
+    date_from = forms.DateField(
+        required=False, label="Last inspected from", widget=forms.DateInput(attrs={"type": "date"})
+    )
+    date_to = forms.DateField(
+        required=False, label="to", widget=forms.DateInput(attrs={"type": "date"})
+    )
+
+    def __init__(self, *args, counties=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["county"].widget.choices = [("", "All counties")] + [(c, c) for c in counties]
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("date_from"), cleaned.get("date_to")
+        if start and end and start > end:
+            raise forms.ValidationError("The start date must come before the end date.")
+        return cleaned
+
+    @property
+    def is_filtered(self):
+        """True when the user actually narrowed anything."""
+        if not self.is_bound:
+            return False
+        cleaned = getattr(self, "cleaned_data", {})
+        return any(cleaned.get(name) for name in self.fields)

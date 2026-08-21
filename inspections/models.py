@@ -185,6 +185,40 @@ class Inspection(models.Model):
         )
 
 
+class ViolationItem(models.Model):
+    """One of the 57 numbered items on the state's inspection form.
+
+    Reference data, seeded from `violation_items.py`. The number is the primary
+    key because it *is* the identifier — the reports cite it directly.
+
+    `official_description` is the state's own wording, kept verbatim.
+    `plain_description` is ours, for readers, and is never overwritten by a
+    re-seed — that's the whole reason this is a table rather than a dict.
+    """
+
+    class Section(models.TextChoices):
+        RISK_FACTORS = "RISK_FACTORS", "Foodborne illness risk factors"
+        GOOD_RETAIL_PRACTICES = "GOOD_RETAIL_PRACTICES", "Good retail practices"
+
+    number = models.PositiveSmallIntegerField(primary_key=True)
+    section = models.CharField(max_length=24, choices=Section.choices, db_index=True)
+    subsection = models.CharField(max_length=120, blank=True)
+    official_description = models.TextField()
+    plain_description = models.TextField(
+        blank=True, help_text="Reader-facing wording. Overrides the official text on the site."
+    )
+
+    class Meta:
+        ordering = ["number"]
+
+    def __str__(self):
+        return f"{self.number}. {self.display_description}"
+
+    @property
+    def display_description(self):
+        return self.plain_description or self.official_description
+
+
 class Violation(models.Model):
     inspection = models.ForeignKey(Inspection, on_delete=models.CASCADE, related_name="violations")
     ordinal = models.PositiveSmallIntegerField(default=0)
@@ -194,7 +228,12 @@ class Violation(models.Model):
     inspector_comments = models.TextField(blank=True)            # the substantive narrative
 
     # Only the report PDF carries these three.
+    # The raw string stays as printed; `item` is the resolved lookup, left null
+    # when the number is unrecognised so an odd value never fails an import.
     item_number = models.CharField(max_length=8, blank=True)
+    item = models.ForeignKey(
+        ViolationItem, on_delete=models.PROTECT, null=True, blank=True, related_name="violations"
+    )
     priority_level = models.CharField(
         max_length=2, blank=True, db_index=True, choices=PriorityLevel.choices
     )
@@ -214,6 +253,11 @@ class Violation(models.Model):
     @property
     def is_priority(self):
         return self.priority_level in (PriorityLevel.PRIORITY, PriorityLevel.PRIORITY_FOUNDATION)
+
+    @property
+    def short_description(self):
+        """What a reader sees before opening the inspector's notes."""
+        return self.item.display_description if self.item_id else ""
 
 
 class ScrapeRun(models.Model):

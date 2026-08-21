@@ -2,7 +2,9 @@ from django.contrib.gis import admin
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import Facility, GeocodeSource, Inspection, ScrapeRun, Violation
+from .models import (
+    Facility, GeocodeSource, Inspection, ScrapeRun, Violation, ViolationItem,
+)
 
 
 class InspectionInline(admin.TabularInline):
@@ -51,7 +53,8 @@ class FacilityAdmin(admin.GISModelAdmin):
 class ViolationInline(admin.TabularInline):
     model = Violation
     extra = 0
-    fields = ("ordinal", "item_number", "code", "priority_level", "inspector_comments", "correct_by", "source")
+    fields = ("ordinal", "item_number", "item", "code", "priority_level", "inspector_comments", "correct_by", "source")
+    autocomplete_fields = ("item",)
 
 
 @admin.register(Inspection)
@@ -95,3 +98,31 @@ class ScrapeRunAdmin(admin.ModelAdmin):
     @admin.display(description="Error")
     def error_display(self, obj):
         return format_html("<pre>{}</pre>", obj.error)
+
+
+@admin.register(ViolationItem)
+class ViolationItemAdmin(admin.ModelAdmin):
+    """Reference data. Numbers and official text come from the state's form;
+    `plain_description` is ours to write and survives a re-seed."""
+
+    list_display = ("number", "display_description", "section", "subsection", "violation_count")
+    list_filter = ("section", "subsection")
+    search_fields = ("number", "official_description", "plain_description", "subsection")
+    readonly_fields = ("number", "section", "subsection", "official_description")
+    ordering = ("number",)
+
+    @admin.display(description="Reader-facing text")
+    def display_description(self, obj):
+        if obj.plain_description:
+            return format_html("<strong>{}</strong>", obj.plain_description)
+        return obj.official_description
+
+    @admin.display(description="Times cited")
+    def violation_count(self, obj):
+        return obj.violations.count()
+
+    def has_add_permission(self, request):
+        return False   # the form defines these, not us
+
+    def has_delete_permission(self, request, obj=None):
+        return False

@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from .geocoding import locate_facility
 from .models import (
-    Facility, Inspection, ScrapeRun, Violation, ViolationSource, fingerprint,
+    Facility, Inspection, ScrapeRun, Violation, ViolationItem, ViolationSource, fingerprint,
 )
 from .scraper import ADHClient
 from .scraper.report_pdf import parse_report
@@ -198,6 +198,15 @@ def _fetch_details(client, form_state, inspection, idata):
     return created
 
 
+def _resolve_item(item_number, known_items):
+    """Map the number printed on the report to a form item, or None if unknown."""
+    if item_number.isdigit() and int(item_number) in known_items:
+        return int(item_number)
+    if item_number:
+        logger.info("Unrecognised violation item number %r", item_number)
+    return None
+
+
 def parse_report_pdf(inspection):
     """Read violations out of a stored report PDF and make them authoritative.
 
@@ -222,6 +231,8 @@ def parse_report_pdf(inspection):
         for v in inspection.violations.all()
         if v.code and v.code_explanation
     }
+    # One query for the 57 reference rows, rather than one per violation.
+    known_items = set(ViolationItem.objects.values_list("number", flat=True))
 
     with transaction.atomic():
         inspection.violations.all().delete()
@@ -233,6 +244,7 @@ def parse_report_pdf(inspection):
                 code_explanation=explanations.get(row["code"], ""),
                 inspector_comments=row["comment"],
                 item_number=row["item_number"],
+                item_id=_resolve_item(row["item_number"], known_items),
                 priority_level=row["priority_level"],
                 correct_by=row["correct_by"],
                 source=ViolationSource.PDF,

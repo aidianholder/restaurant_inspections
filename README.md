@@ -80,6 +80,39 @@ state's server.
 Not currently extracted, but present in the reports and straightforward to add:
 the temperature-observations table, inspector name, and time in/out.
 
+## The 57 form items
+
+Every violation cites a numbered item (1–57) from the state's inspection form, and
+each number has a short description of what it covers — "Proper cold holding
+temperatures", "Adequate handwashing facilities supplied & accessible". That's the
+text a reader sees before opening the inspector's notes.
+
+The list is **not typed by hand**. The checklist is printed on page 1 of every
+report, so it was extracted from 188 of them and cross-checked, requiring each
+number to yield identical text across all. Only item 26 disagreed — 11 reports bled
+a stray glyph into the cell — and the majority text wins. The result lives in
+[`violation_items.py`](inspections/violation_items.py) and is seeded into the
+`ViolationItem` table by a migration.
+
+It's a table rather than a dict for one reason that matters: `plain_description`.
+The state's wording is bureaucratic, and a table lets you write reader-facing text
+in the admin without a deploy, surviving any re-seed. `official_description` keeps
+the state's own words verbatim alongside it.
+
+`Violation.item` is a nullable FK, resolved at parse time. The raw `item_number`
+string is kept as printed, so an unrecognised number degrades to "no short
+description" rather than failing an import. Item 57 is the catch-all — its official
+wording is an instruction to inspectors, so it ships with "Other violations" as its
+reader-facing text. It accounts for about 3% of violations.
+
+Because violations are now keyed to a stable number, they aggregate: "every
+cold-holding violation in Pulaski this year" is a real query, which free-text
+comments could never answer.
+
+```bash
+.venv/bin/python manage.py seed_violation_items --relink   # after a form revision
+```
+
 ## Locations
 
 Every facility gets a point (PostGIS `PointField`, WGS84, `geography=True` so
@@ -157,6 +190,14 @@ createdb health_inspections
 .venv/bin/python manage.py createsuperuser
 ```
 
+> **Restart the worker after every migration.** `qcluster` is a long-lived process
+> that holds model definitions in memory. If a migration changes the schema while
+> it is running, the worker keeps issuing queries against the old columns and every
+> scrape queued from the web UI fails with something like
+> `column inspections_facility.latitude does not exist` — while `manage.py
+> scrape_county` keeps working, because it starts a fresh process each time. That
+> asymmetry is the tell.
+
 Run the web server and the background worker in two terminals:
 
 ```bash
@@ -198,12 +239,17 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |
+| `inspections/violation_items.py` | The 57 numbered form items, extracted from the reports |
 | `inspections/counties.py` | County name → ADH form ID |
 
 ## Deployment notes
 
 - `django-q2` uses the Postgres database as its broker, so production needs only
   Postgres — no Redis. Run `manage.py qcluster` under systemd alongside the app.
+- **Deploys must restart the worker after `migrate`,** not just the web process.
+  A worker left running across a schema change queries the old columns and fails
+  every job. Make the restart part of the deploy script rather than a step someone
+  has to remember.
 - Report PDFs are written to `MEDIA_ROOT`. Swap in `django-storages` (S3/R2) for
   production without a model change; they are deliberately *not* database blobs.
 - `SCRAPER_DELAY_SECONDS` throttles requests to the state's server. Don't set it
