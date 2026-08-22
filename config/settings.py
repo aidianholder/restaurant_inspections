@@ -82,12 +82,14 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+# Overridable because the checkout lives under a home directory nginx cannot
+# traverse in production; collected assets go somewhere www-data can read.
+STATIC_ROOT = Path(os.getenv("DJANGO_STATIC_ROOT") or BASE_DIR / "staticfiles")
 
 # Inspection report PDFs are ingested content, not project assets, so they live
 # under MEDIA_ROOT. Swap in django-storages (S3/R2) later without a model change.
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(os.getenv("DJANGO_MEDIA_ROOT") or BASE_DIR / "media")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -179,3 +181,18 @@ LOGGING = {
         "inspections": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
+
+
+# Production hardening. nginx terminates TLS and proxies over a unix socket, so
+# Django only learns the original scheme from X-Forwarded-Proto — without this
+# is_secure() is always False and the redirect below would loop forever.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # nginx already 301s :80 to :443, so SECURE_SSL_REDIRECT would only duplicate
+    # that — and it turns every test-client request into a 301.
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 365
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+    CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if not h.startswith(".")]
