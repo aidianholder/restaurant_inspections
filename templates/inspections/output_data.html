@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Output inspections{% endblock %}
+{% block content %}
+<h2>Output inspections</h2>
+<p class="sub">Pick a county and a date range. The result is ready-to-paste HTML covering every
+   establishment cited in that window, day by day.</p>
+
+<div class="card">
+  <form method="get">
+    {% if form.non_field_errors %}<div class="errors">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="row">
+      <div>
+        <label for="{{ form.county.id_for_label }}">County</label>
+        {{ form.county }}
+        {% if form.county.errors %}<div class="errors">{{ form.county.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label for="{{ form.date_from.id_for_label }}">From</label>
+        {{ form.date_from }}
+        {% if form.date_from.errors %}<div class="errors">{{ form.date_from.errors }}</div>{% endif %}
+      </div>
+      <div>
+        <label for="{{ form.date_to.id_for_label }}">To</label>
+        {{ form.date_to }}
+        {% if form.date_to.errors %}<div class="errors">{{ form.date_to.errors }}</div>{% endif %}
+      </div>
+    </div>
+    <p style="margin:20px 0 0"><button type="submit">Output</button></p>
+  </form>
+</div>
+
+{% if export %}
+  {% if export.establishments %}
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:32px 0 8px">
+      <h2 style="margin:0;font-size:18px">
+        {{ export.establishments }} establishment{{ export.establishments|pluralize }}
+        over {{ export.days }} day{{ export.days|pluralize }}</h2>
+      <button type="button" id="copy" style="margin-left:auto;padding:6px 14px;font-size:13px">
+        Copy HTML</button>
+    </div>
+    <textarea id="output" readonly rows="24" spellcheck="false"
+              style="width:100%;padding:12px;border:1px solid #c9c5bd;border-radius:4px;
+                     font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+                     background:#fff;resize:vertical">{{ export.html }}</textarea>
+    {% if export.uncategorised %}
+      <p class="sub" style="margin-top:10px;color:#9a6700">
+        {{ export.uncategorised }} inspection{{ export.uncategorised|pluralize }} in this range
+        {{ export.uncategorised|pluralize:"has,have" }} violations that were never sorted into
+        priority, priority foundation or core — those come from the report PDF, which hasn't been
+        parsed for {{ export.uncategorised|pluralize:"this inspection,these inspections" }}. They
+        are left out above.</p>
+    {% endif %}
+    <script>
+      document.getElementById('copy').addEventListener('click', function () {
+        const box = document.getElementById('output');
+        box.select();
+        // The clipboard API needs a secure context; the selection fallback keeps
+        // the button working over plain HTTP on an internal host.
+        const done = () => { this.textContent = 'Copied'; setTimeout(() => { this.textContent = 'Copy HTML'; }, 1500); };
+        if (navigator.clipboard) { navigator.clipboard.writeText(box.value).then(done, () => { document.execCommand('copy'); done(); }); }
+        else { document.execCommand('copy'); done(); }
+      });
+    </script>
+  {% else %}
+    <p class="sub" style="margin-top:32px">No cited establishments in that county and date range.
+       Anything not retrieved yet won't appear here —
+       <a href="{% url 'scrape-request' %}">retrieve it first</a>.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}
