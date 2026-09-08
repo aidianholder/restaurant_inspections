@@ -6,8 +6,9 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django_q.tasks import async_task
 
-from .forms import FacilityFilterForm, ScrapeRequestForm
+from .forms import FacilityFilterForm, OutputForm, ScrapeRequestForm
 from .models import Facility, Inspection, ScrapeRun, Violation
+from .output import build_export
 
 
 def scrape_request(request):
@@ -171,3 +172,23 @@ def facility_detail(request, slug):
         slug=slug,
     )
     return render(request, "inspections/facility_detail.html", {"facility": facility})
+
+
+def output_data(request):
+    """Render stored inspections as HTML a newsroom can paste into a story."""
+    form = OutputForm(request.GET or None)
+    export = None
+    if form.is_bound and form.is_valid():
+        export = build_export(
+            form.cleaned_data["county"],
+            form.cleaned_data["date_from"],
+            form.cleaned_data["date_to"],
+            # Report links leave this site, so they have to be absolute.
+            base_url=request.build_absolute_uri("/"),
+        )
+
+    return render(
+        request,
+        "inspections/output_data.html",
+        {"form": form, "export": export},
+    )

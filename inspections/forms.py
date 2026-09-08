@@ -86,3 +86,37 @@ class FacilityFilterForm(forms.Form):
             return False
         cleaned = getattr(self, "cleaned_data", {})
         return any(cleaned.get(name) for name in self.fields)
+
+
+class OutputForm(forms.Form):
+    """Which slice of stored data to render as pasteable HTML.
+
+    Reads from the query string rather than a POST: nothing is written, and a
+    desk that regenerates the same week's copy wants a URL it can keep.
+    """
+
+    county = forms.ChoiceField(
+        choices=[("", "Select a county…")] + [(c, c) for c in sorted(COUNTY_IDS) if c != "UNKNOWN"],
+    )
+    date_from = forms.DateField(
+        label="From",
+        widget=forms.DateInput(attrs={"type": "date"}),
+        initial=lambda: dt.date.today() - dt.timedelta(days=7),
+    )
+    date_to = forms.DateField(
+        label="To",
+        widget=forms.DateInput(attrs={"type": "date"}),
+        initial=dt.date.today,
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("date_from"), cleaned.get("date_to")
+        if start and end:
+            if start > end:
+                raise forms.ValidationError("The start date must come before the end date.")
+            if (end - start).days > MAX_RANGE_DAYS:
+                raise forms.ValidationError(
+                    f"Please output {MAX_RANGE_DAYS} days or fewer at a time."
+                )
+        return cleaned
