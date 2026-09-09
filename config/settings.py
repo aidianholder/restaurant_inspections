@@ -166,6 +166,18 @@ MAX_GEOCODE_ATTEMPTS = int(os.getenv("MAX_GEOCODE_ATTEMPTS", "3"))
 # requests made to the state's server per inspection.
 SCRAPE_WEB_OBSERVATIONS = env_bool("SCRAPE_WEB_OBSERVATIONS", True)
 
+# Optional AI summarisation of an export, on the Output data screen. The token
+# stays server-side: the browser posts to our own endpoint, which rebuilds the
+# export and calls OpenAI, so the key is never shipped to a reader's browser.
+# The model is configurable because the sensible choice moves faster than this
+# codebase does; anything that speaks the chat completions API will work.
+OPENAI_TOKEN = os.getenv("OPEN_AI_TOKEN", "")
+OPENAI_API_URL = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# A month of a large county is a long document. Generous, because the person who
+# pressed the button is sitting there watching it.
+OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "120"))
+
 # Scraper behaviour.
 SCRAPER_DELAY_SECONDS = float(os.getenv("SCRAPER_DELAY_SECONDS", "1.5"))
 SCRAPER_USER_AGENT = os.getenv(

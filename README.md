@@ -78,6 +78,57 @@ and send a long tail of misses to Django.
   wrapper instead, and posts immediately rather than only inside
   `requestAnimationFrame`, which never runs while a tab is in the background.
 
+## Output data
+
+`/output/` turns stored inspections into an HTML fragment a desk can paste
+straight into a story: pick a county and a date range, press Output, copy the
+box. It is a fragment, not a document — paragraphs, headings and lists, no
+wrapper, no styling, no classes — because it is going into someone's CMS.
+
+The shape is fixed: the four explanatory paragraphs about what priority,
+priority foundation and core mean, then each day as a heading, then each
+establishment cited that day in alphabetical order with its address, inspection
+type, one group per category it was cited under, the inspector's own wording for
+each observation, and a link to the report.
+
+Everything is read straight from the database. The observations are quotes from
+a public record, so they are reproduced verbatim; nothing is paraphrased on the
+way out.
+
+### Only cited establishments, only categorised violations
+
+A clean inspection has nothing to list and does not appear. Neither does a
+violation with no priority level — the three categories come from the report
+PDF, and a violation scraped from the website overlay alone has no category to
+file it under. Those are counted and reported under the box rather than dropped
+silently, because "this restaurant wasn't cited" and "we haven't parsed its
+report yet" are very different claims to make in print.
+
+### Summarize with AI
+
+With `OPEN_AI_TOKEN` set, a second button sends the output to OpenAI and shows
+the shortened version in its own box, with its own copy button. One summary per
+category per establishment; everything else — the boilerplate, the dates, the
+names, the addresses, the report links — comes back unchanged.
+
+The prompt tells the model to use nothing but the text it was handed. That is
+the whole point: these are an inspector's words about a named business, and a
+model that helpfully explains what a violation *means*, or what usually causes
+one, would be putting words in that inspector's mouth. Read the summary against
+the box above it before publishing.
+
+The call goes through `/output/summarize/` on this server, never from the
+reader's browser, so the token stays server-side. That endpoint takes a county
+and a date range and rebuilds the export itself rather than accepting HTML
+posted to it — otherwise it would be an open pipe to the newsroom's OpenAI
+account for whatever text someone cared to POST at it.
+
+`OPENAI_MODEL` picks the model (anything that speaks the chat completions API).
+No `temperature` or token cap is sent: which of the two the API accepts changes
+between model generations, and sending one the chosen model rejects fails the
+whole call. Without a token the button renders disabled and says why; the rest
+of the page works as normal.
+
 ## Scheduled scrapes
 
 Each county can carry a standing instruction to re-scrape itself — cadence, the day
@@ -338,6 +389,8 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/ingest.py` | Drives the scraper, writes to the database |
 | `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
 | `inspections/embed_views.py` | Public embed page and loader script |
+| `inspections/output.py` | Stored inspections → pasteable HTML for a story |
+| `inspections/summarize.py` | Sends an export to OpenAI to be shortened |
 | `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |
@@ -361,3 +414,8 @@ markup or report layout rather than silently importing empty rows.
 - `ARKANSAS_GIS_DELAY` and `CENSUS_GEOCODER_DELAY` throttle the geocoders the
   same way `SCRAPER_DELAY_SECONDS` throttles ADH. Set `GEOCODING_ENABLED=False`
   to turn location lookup off entirely.
+- `OPEN_AI_TOKEN` enables the summarise button on `/output/`. It is optional and
+  read only on the server. Summarising happens in the request the button makes,
+  not on the worker, so the web process needs an outbound route to the API and a
+  proxy timeout above `OPENAI_TIMEOUT` (120s by default) — a wide date range is a
+  long document and gunicorn's own 30s default will cut it off.
