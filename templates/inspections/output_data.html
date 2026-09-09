@@ -35,8 +35,8 @@
       <h2 style="margin:0;font-size:18px">
         {{ export.establishments }} establishment{{ export.establishments|pluralize }}
         over {{ export.days }} day{{ export.days|pluralize }}</h2>
-      <button type="button" id="copy" style="margin-left:auto;padding:6px 14px;font-size:13px">
-        Copy HTML</button>
+      <button type="button" class="copy" data-target="output"
+              style="margin-left:auto;padding:6px 14px;font-size:13px">Copy HTML</button>
     </div>
     <textarea id="output" readonly rows="24" spellcheck="false"
               style="width:100%;padding:12px;border:1px solid #c9c5bd;border-radius:4px;
@@ -50,16 +50,99 @@
         parsed for {{ export.uncategorised|pluralize:"this inspection,these inspections" }}. They
         are left out above.</p>
     {% endif %}
+
+    <p style="margin:18px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <button type="button" id="summarize"{% if not summary_available %} disabled style="background:#c9c5bd;cursor:not-allowed"{% endif %}>Summarize with AI</button>
+      <span class="sub" id="summarize-note" style="margin:0">
+        {% if summary_available %}
+          Shortens each establishment's observations, one summary per category. Check it against
+          the text above before it runs.
+        {% else %}
+          Set <code>OPEN_AI_TOKEN</code> in the environment to enable this.
+        {% endif %}
+      </span>
+    </p>
+
+    <div id="summary-block" hidden>
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:28px 0 8px">
+        <h2 style="margin:0;font-size:18px">AI summary</h2>
+        <span class="sub" id="summary-model" style="margin:0"></span>
+        <button type="button" class="copy" data-target="summary"
+                style="margin-left:auto;padding:6px 14px;font-size:13px">Copy HTML</button>
+      </div>
+      <textarea id="summary" readonly rows="24" spellcheck="false"
+                style="width:100%;padding:12px;border:1px solid #c9c5bd;border-radius:4px;
+                       font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+                       background:#fff;resize:vertical"></textarea>
+      <p class="sub" id="summary-truncated" hidden style="margin-top:10px;color:#9a6700">
+        The model hit its length limit, so this summary stops early. Narrow the date range and
+        run it again.</p>
+    </div>
+
     <script>
-      document.getElementById('copy').addEventListener('click', function () {
-        const box = document.getElementById('output');
-        box.select();
-        // The clipboard API needs a secure context; the selection fallback keeps
-        // the button working over plain HTTP on an internal host.
-        const done = () => { this.textContent = 'Copied'; setTimeout(() => { this.textContent = 'Copy HTML'; }, 1500); };
-        if (navigator.clipboard) { navigator.clipboard.writeText(box.value).then(done, () => { document.execCommand('copy'); done(); }); }
-        else { document.execCommand('copy'); done(); }
-      });
+      (function () {
+        function flash(button, text) {
+          const original = button.dataset.label || button.textContent;
+          button.dataset.label = original;
+          button.textContent = text;
+          setTimeout(function () { button.textContent = original; }, 1500);
+        }
+
+        document.querySelectorAll('button.copy').forEach(function (button) {
+          button.addEventListener('click', function () {
+            const box = document.getElementById(button.dataset.target);
+            box.select();
+            const done = function () { flash(button, 'Copied'); };
+            // The clipboard API needs a secure context; the selection fallback
+            // keeps the button working over plain HTTP on an internal host.
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(box.value).then(done, function () {
+                document.execCommand('copy'); done();
+              });
+            } else { document.execCommand('copy'); done(); }
+          });
+        });
+
+        const summarize = document.getElementById('summarize');
+        if (!summarize || summarize.disabled) { return; }
+
+        summarize.addEventListener('click', function () {
+          const note = document.getElementById('summarize-note');
+          const block = document.getElementById('summary-block');
+          // The query string, not the form fields: it is what the output on
+          // screen was built from, and the user may have typed something new
+          // into the form without pressing Output.
+          const body = new URLSearchParams(window.location.search);
+          body.set('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+          summarize.disabled = true;
+          summarize.textContent = 'Summarizing…';
+          note.textContent = 'This can take a minute for a wide date range.';
+          note.style.color = '';
+
+          fetch('{% url "output-summary" %}', { method: 'POST', body: body })
+            .then(function (response) {
+              return response.json().then(function (data) { return { ok: response.ok, data: data }; });
+            })
+            .then(function (result) {
+              if (!result.ok) { throw new Error(result.data.error || 'The summary failed.'); }
+              document.getElementById('summary').value = result.data.html;
+              document.getElementById('summary-model').textContent = result.data.model || '';
+              document.getElementById('summary-truncated').hidden = !result.data.truncated;
+              block.hidden = false;
+              note.textContent = 'Read it against the output above before publishing.';
+              block.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            })
+            .catch(function (error) {
+              note.textContent = error.message;
+              note.style.color = '#8c1d1d';
+            })
+            .finally(function () {
+              summarize.disabled = false;
+              summarize.textContent = 'Summarize with AI';
+            });
+        });
+      })();
     </script>
   {% else %}
     <p class="sub" style="margin-top:32px">No cited establishments in that county and date range.

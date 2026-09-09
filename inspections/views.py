@@ -1,14 +1,19 @@
+import logging
 from collections import defaultdict
 
+from django.conf import settings
 from django.db.models import Count, IntegerField, OuterRef, Prefetch, Q, Subquery
 from django.db.models.functions import Coalesce
-from django.http import JsonResponse
+from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django_q.tasks import async_task
 
 from .forms import FacilityFilterForm, OutputForm, ScrapeRequestForm
 from .models import Facility, Inspection, ScrapeRun, Violation
 from .output import build_export
+from .summarize import SummaryError, summarize
+
+logger = logging.getLogger(__name__)
 
 
 def scrape_request(request):
@@ -190,5 +195,53 @@ def output_data(request):
     return render(
         request,
         "inspections/output_data.html",
-        {"form": form, "export": export},
+        # The button explains itself rather than failing on click when no token
+        # has been configured.
+        {"form": form, "export": export, "summary_available": bool(settings.OPENAI_TOKEN)},
     )
+
+
+def output_summary(request):
+    """Shorten an export's observations via OpenAI. Posted to, answers JSON.
+
+    Takes the same county and date range the export was built from and rebuilds
+    it here rather than accepting HTML from the browser. Two reasons: the summary
+    is then provably of our own data, and the endpoint can't be used to spend the
+    newsroom's OpenAI account on arbitrary text someone posts at it.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    form = OutputForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"error": _first_error(form)}, status=400)
+
+    export = build_export(
+        form.cleaned_data["county"],
+        form.cleaned_data["date_from"],
+        form.cleaned_data["date_to"],
+        base_url=request.build_absolute_uri("/"),
+    )
+    if not export.establishments:
+        return JsonResponse({"error": "There is nothing to summarise."}, status=400)
+
+    try:
+        summary = summarize(export.html)
+    except SummaryError as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
+
+    logger.info(
+        "Summarised %s establishments for %s with %s",
+        export.establishments, form.cleaned_data["county"], summary.model,
+    )
+    return JsonResponse(
+        {"html": summary.html, "model": summary.model, "truncated": summary.truncated}
+    )
+
+
+def _first_error(form):
+    """One sentence a person can act on, rather than Django's error dict."""
+    for errors in [form.non_field_errors(), *form.errors.values()]:
+        if errors:
+            return errors[0]
+    return "That request wasn't valid."
