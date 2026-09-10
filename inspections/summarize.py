@@ -43,12 +43,16 @@ go in the summary.
 2. Summarise each group on its own. A "Priority" summary covers only that \
 establishment's priority observations, and likewise for "Priority Foundation" \
 and "Core". Never merge observations across groups or across establishments.
-3. Keep everything else exactly as it appears: the explanatory paragraphs at the \
+3. Do not combine violations -- each violation should be considered separately. \
+You can combine multiple violations into a single sentence, but it should always \
+be clear that they are separate violations.
+4. Do not skip violations - each violation should be included in the summary.
+5. Keep everything else exactly as it appears: the explanatory paragraphs at the \
 top, every date heading, every establishment name, address and inspection type, \
 every group heading, and every report link.
-4. Return valid HTML using the same tags and structure as the input, changing \
+6. Return valid HTML using the same tags and structure as the input, changing \
 only the contents of the lists.
-5. Return the HTML and nothing else — no Markdown code fences, no preamble, no \
+7. Return the HTML and nothing else — no Markdown code fences, no preamble, no \
 closing remarks.\
 """
 
