@@ -174,9 +174,16 @@ SCRAPE_WEB_OBSERVATIONS = env_bool("SCRAPE_WEB_OBSERVATIONS", True)
 OPENAI_TOKEN = os.getenv("OPEN_AI_TOKEN", "")
 OPENAI_API_URL = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-# A month of a large county is a long document. Generous, because the person who
-# pressed the button is sitting there watching it.
+# Per request. Batching keeps each one small, so this is a ceiling rather than
+# something a normal run approaches.
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "120"))
+# Establishments per request. The document is cut on block boundaries we wrote,
+# so batching costs nothing structurally — it just keeps each call short enough
+# to finish and small enough not to be truncated.
+OPENAI_BATCH_SIZE = int(os.getenv("OPENAI_BATCH_SIZE", "10"))
+# Batches in flight at once. Low on purpose: the gain over serial is most of the
+# way there by four, and beyond that a wide range starts tripping rate limits.
+OPENAI_MAX_PARALLEL = int(os.getenv("OPENAI_MAX_PARALLEL", "4"))
 
 # Scraper behaviour.
 SCRAPER_DELAY_SECONDS = float(os.getenv("SCRAPER_DELAY_SECONDS", "1.5"))
