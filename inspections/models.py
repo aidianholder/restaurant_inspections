@@ -12,6 +12,7 @@ import re
 
 from django.contrib.gis.db import models
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.urls import reverse
 from django.utils.text import slugify
@@ -361,6 +362,135 @@ class Embed(models.Model):
 
     def get_absolute_url(self):
         return reverse("embed-page", args=[self.slug])
+
+
+class SummaryPrompt(models.Model):
+    """What the AI summariser is told to do, editable without a deploy.
+
+    Several rows, exactly one active. Rows rather than one edit-in-place record
+    because tuning a prompt means going backwards as often as forwards — "that
+    rule fixed the skipping but now it's too wordy, put it back" — and a
+    singleton destroys the previous wording on every save. Django's admin
+    history does not rescue you there: `LogEntry` stores who changed what and
+    when, but not the old field values.
+
+    The code keeps `summarize.SYSTEM_PROMPT` as the fallback and the first
+    migration seeds it as row one, the same arrangement `ViolationItem` has with
+    `violation_items.py`: a fresh install works untouched, and emptying the table
+    degrades to the shipped wording rather than breaking the button.
+    """
+
+    # The only substitution offered in `user_template`. Anything else is a typo,
+    # and a typo here is a KeyError in the middle of somebody's deadline, so
+    # clean() rejects it at save time instead.
+    USER_PLACEHOLDERS = {"html"}
+
+    name = models.CharField(
+        max_length=120, unique=True,
+        help_text="What you'll pick between later, e.g. 'Terser, September 2026'.",
+    )
+    system_prompt = models.TextField(
+        help_text="The instructions. Rules 1 and 2 are load-bearing: they are what "
+                  "keeps the model quoting the inspector instead of explaining what a "
+                  "violation usually means. Change them only deliberately.",
+    )
+    user_template = models.TextField(
+        blank=True,
+        help_text="Optional wrapper for the export, e.g. an example of a good summary "
+                  "to work from. Use {html} where the inspections should go. Leave "
+                  "blank to send the export on its own, which is the default.",
+    )
+    model = models.CharField(
+        max_length=80, blank=True,
+        help_text="Overrides OPENAI_MODEL for this prompt only. Leave blank to use "
+                  "whatever the environment is set to.",
+    )
+
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Exactly one prompt is active. Ticking this unticks the others.",
+    )
+    notes = models.TextField(blank=True, help_text="Internal only. What you changed and why.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-is_active", "name"]
+        constraints = [
+            # Belt and braces with the save() below. "Which prompt is actually
+            # live" is not a question anyone should be guessing at on deadline.
+            models.UniqueConstraint(
+                fields=["is_active"],
+                condition=models.Q(is_active=True),
+                name="only_one_active_summary_prompt",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name}{' (active)' if self.is_active else ''}"
+
+    def clean(self):
+        if not self.system_prompt.strip():
+            raise ValidationError({"system_prompt": "The instructions can't be empty."})
+
+        if self.user_template.strip():
+            # A sentinel rather than an empty string: "{{html}}" is an escaped
+            # literal brace, not a substitution, and comparing against the
+            # original text would wave it through.
+            sentinel = "\x00inspections\x00"
+            try:
+                rendered = self.user_template.format(
+                    **{key: sentinel for key in self.USER_PLACEHOLDERS}
+                )
+            except (KeyError, IndexError) as exc:
+                raise ValidationError({
+                    "user_template": f"{exc} isn't a placeholder this template can use. "
+                                     f"The only one available is {{html}}; everything else "
+                                     f"has to be written out in full."
+                }) from exc
+            except ValueError as exc:
+                raise ValidationError({
+                    "user_template": f"That isn't a valid template ({exc}). A literal curly "
+                                     f"brace has to be doubled: {{{{ and }}}}."
+                }) from exc
+            if sentinel not in rendered:
+                raise ValidationError({
+                    "user_template": "This template never inserts the inspections. Put "
+                                     "{html} where they should go, or leave the field "
+                                     "blank to send them on their own.",
+                })
+
+    def validate_constraints(self, exclude=None):
+        """Skip the one-active check at form level; `save()` is what enforces it.
+
+        A ModelForm validates constraints *before* calling save(), so the admin
+        would see the currently-active row alongside this one and reject the edit
+        — and ticking "active" on a second prompt is precisely how you switch
+        prompts. save() clears the others in the same transaction, so by the time
+        anything is written the index is satisfied. The constraint stays on the
+        table to catch what bypasses save(): a bulk update(), a migration, a hand
+        at the dbshell.
+        """
+        exclude = set(exclude or ()) | {"is_active"}
+        return super().validate_constraints(exclude=exclude)
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if self.is_active:
+                # Before the write, so the partial unique index never sees two.
+                SummaryPrompt.objects.exclude(pk=self.pk).filter(is_active=True).update(
+                    is_active=False
+                )
+            super().save(*args, **kwargs)
+
+    def render_user_message(self, html):
+        """The user message to send for this export."""
+        return self.user_template.format(html=html) if self.user_template.strip() else html
+
+    @classmethod
+    def active(cls):
+        """The live prompt, or None to fall back to the wording shipped in code."""
+        return cls.objects.filter(is_active=True).first()
 
 
 class ScrapeSchedule(models.Model):

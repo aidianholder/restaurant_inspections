@@ -1,11 +1,13 @@
 from django.contrib.gis import admin
+from django.db import models as django_models
+from django.forms import Textarea
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import (
-    Embed, Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule, Violation,
-    ViolationItem,
+    Embed, Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule,
+    SummaryPrompt, Violation, ViolationItem,
 )
 
 admin.site.site_header = "AR Health Inspections"
@@ -260,3 +262,81 @@ class EmbedAdmin(admin.ModelAdmin):
     def get_form(self, request, obj=None, **kwargs):
         self._request = request        # so snippets can carry an absolute URL
         return super().get_form(request, obj, **kwargs)
+
+
+@admin.register(SummaryPrompt)
+class SummaryPromptAdmin(admin.ModelAdmin):
+    """What the AI summariser is told, tunable without a deploy.
+
+    Keep the old rows. Tuning a prompt means going backwards as often as
+    forwards, and the cheapest way to answer "was it better before rule 4?" is to
+    still have the version that came before rule 4.
+    """
+
+    list_display = ("name", "active_flag", "model_used", "template_used", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "system_prompt", "user_template", "notes")
+    readonly_fields = ("created_at", "updated_at")
+    actions = ["make_active"]
+    fieldsets = (
+        (None, {"fields": ("name", "is_active")}),
+        ("Instructions", {
+            "fields": ("system_prompt",),
+            "description": "Sent as the system message. The two rules about using only "
+                           "the source text are what keep the model quoting the inspector "
+                           "rather than explaining what a violation usually means — these "
+                           "summaries run under an inspector's byline, so treat those two "
+                           "as load-bearing.",
+        }),
+        ("The message itself", {
+            "fields": ("user_template", "model"),
+            "description": "Leave the template blank to send the inspections on their own, "
+                           "which is what the shipped prompt does. Fill it in when you want "
+                           "to wrap them in something — an example summary to work from is "
+                           "the usual reason. {html} is where the inspections go, and it has "
+                           "to appear somewhere.",
+        }),
+        ("Internal", {"fields": ("notes", "created_at", "updated_at")}),
+    )
+    # A prompt is code-shaped text; proportional font at 40 columns makes it
+    # unreadable exactly where careful reading matters.
+    formfield_overrides = {
+        django_models.TextField: {
+            "widget": Textarea(attrs={
+                "rows": 24, "cols": 100,
+                "style": "font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;"
+                         "max-width:100%",
+            })
+        }
+    }
+
+    @admin.display(description="Live", boolean=True, ordering="is_active")
+    def active_flag(self, obj):
+        return obj.is_active
+
+    @admin.display(description="Model")
+    def model_used(self, obj):
+        return obj.model or format_html('<span style="color:#888">{}</span>', "OPENAI_MODEL")
+
+    @admin.display(description="Wraps the export", boolean=True)
+    def template_used(self, obj):
+        return bool(obj.user_template.strip())
+
+    @admin.action(description="Make this the active prompt")
+    def make_active(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request, "Pick exactly one prompt to activate.", level="error"
+            )
+            return
+        prompt = queryset.get()
+        prompt.is_active = True
+        # Through save(), so the others are deactivated in the same transaction.
+        prompt.save()
+        self.message_user(request, f"'{prompt.name}' is now the active prompt.")
+
+    def has_delete_permission(self, request, obj=None):
+        """The live prompt can't be deleted out from under the button."""
+        if obj is not None and obj.is_active:
+            return False
+        return super().has_delete_permission(request, obj)

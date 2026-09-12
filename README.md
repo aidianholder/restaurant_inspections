@@ -129,6 +129,51 @@ between model generations, and sending one the chosen model rejects fails the
 whole call. Without a token the button renders disabled and says why; the rest
 of the page works as normal.
 
+### Tuning the prompt, in the admin
+
+The wording lives in `SummaryPrompt` rows, edited under **Summary prompts**. An
+edit takes effect on the next press of the button — no deploy, and nothing is
+cached, because a stale prompt would mean "I changed it and nothing happened",
+which is the failure this exists to prevent.
+
+Keep the old rows. Tuning a prompt means going backwards as often as forwards,
+and the cheapest answer to "was it better before that rule?" is to still have the
+version from before that rule. Copy a prompt to a new row, change the copy, tick
+it active. The previous one is one click away. Django's admin history will not do
+this for you — `LogEntry` records who changed what and when, but not the old
+values.
+
+Exactly one row is active, enforced twice: `save()` clears the others in the same
+transaction, and a partial unique index on the table catches anything that
+bypasses `save()`. Constraint validation is skipped at form level, because a
+ModelForm checks constraints *before* saving and would otherwise reject the very
+edit that switches prompts. The live row cannot be deleted.
+
+`user_template` is optional and wraps the export — an example summary to work
+from is the usual reason to want one. `{html}` is where the inspections go, and a
+template that never inserts them, or that uses a placeholder that doesn't exist,
+is refused on save rather than raising `KeyError` in the middle of someone's
+deadline. `model` overrides `OPENAI_MODEL` for that prompt alone, which is what
+you want when comparing two prompts on the same model, or one prompt on two.
+
+The output page reports which prompt and which model produced what you are
+looking at. Without that, comparing two summaries means guessing which made
+either.
+
+`summarize.SYSTEM_PROMPT` stays in the code as the shipped wording and the
+fallback; migration `0012` seeds it as the first active row and never overwrites
+an existing one. An install that has never run the seed, or a table someone has
+emptied, summarises with that rather than failing — the same deal
+`ViolationItem.plain_description` gets from `0008`.
+
+**The editorial constraint is in the prompt, and only in the prompt.** Rules 1
+and 2 are what keep the model quoting the inspector instead of explaining what a
+violation usually means. Anyone with admin access can now remove them with one
+save, and the result publishes under an inspector's byline. The admin says so on
+the form. If more than one person has access and that isn't comfortable, the
+stricter arrangement is a fixed provenance preamble in code concatenated with the
+editable rules from the row.
+
 ## Scheduled scrapes
 
 Each county can carry a standing instruction to re-scrape itself — cadence, the day
@@ -390,7 +435,7 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
 | `inspections/embed_views.py` | Public embed page and loader script |
 | `inspections/output.py` | Stored inspections → pasteable HTML for a story |
-| `inspections/summarize.py` | Sends an export to OpenAI to be shortened |
+| `inspections/summarize.py` | Sends an export to OpenAI to be shortened, using the active `SummaryPrompt` |
 | `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |
@@ -414,6 +459,9 @@ markup or report layout rather than silently importing empty rows.
 - `ARKANSAS_GIS_DELAY` and `CENSUS_GEOCODER_DELAY` throttle the geocoders the
   same way `SCRAPER_DELAY_SECONDS` throttles ADH. Set `GEOCODING_ENABLED=False`
   to turn location lookup off entirely.
+- The summariser's wording is a database row, not a setting — edit it under
+  **Summary prompts** in the admin, not in `summarize.py`. The constant there is
+  only the seed and the fallback.
 - `OPEN_AI_TOKEN` enables the summarise button on `/output/`. It is optional and
   read only on the server. Summarising happens in the request the button makes,
   not on the worker, so the web process needs an outbound route to the API and a

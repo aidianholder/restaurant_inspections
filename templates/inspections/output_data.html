@@ -127,7 +127,8 @@
             .then(function (result) {
               if (!result.ok) { throw new Error(result.data.error || 'The summary failed.'); }
               document.getElementById('summary').value = result.data.html;
-              document.getElementById('summary-model').textContent = result.data.model || '';
+              document.getElementById('summary-model').textContent =
+                [result.data.prompt, result.data.model].filter(Boolean).join(' · ');
               document.getElementById('summary-truncated').hidden = !result.data.truncated;
               block.hidden = false;
               note.textContent = 'Read it against the output above before publishing.';
