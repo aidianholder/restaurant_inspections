@@ -85,11 +85,24 @@ straight into a story: pick a county and a date range, press Output, copy the
 box. It is a fragment, not a document — paragraphs, headings and lists, no
 wrapper, no styling, no classes — because it is going into someone's CMS.
 
-The shape is fixed: the four explanatory paragraphs about what priority,
-priority foundation and core mean, then each day as a heading, then each
-establishment cited that day in alphabetical order with its address, inspection
-type, one group per category it was cited under, the inspector's own wording for
-each observation, and a link to the report.
+The shape is fixed:
+
+```html
+<h1>Faulkner County health inspections 9/04/26 - 9/11/26</h1>
+```
+
+then the four explanatory paragraphs about what priority, priority foundation
+and core mean, then every cited establishment in one alphabetical run — name,
+address, inspection type, one group per category it was cited under, and the
+inspector's own wording for each observation.
+
+The range in that heading is the *requested* range, not the span of days that
+happened to produce a citation: it tells the reader what period was searched.
+
+Inspections are not grouped by date and carry no date of their own, so the
+heading is the only date on the page. An establishment inspected twice in the
+range appears twice, consecutively, in the order the inspections happened — the
+inspection type is what tells them apart.
 
 Everything is read straight from the database. The observations are quotes from
 a public record, so they are reproduced verbatim; nothing is paraphrased on the
@@ -108,8 +121,9 @@ report yet" are very different claims to make in print.
 
 With `OPEN_AI_TOKEN` set, a second button sends the output to OpenAI and shows
 the shortened version in its own box, with its own copy button. One summary per
-category per establishment; everything else — the boilerplate, the dates, the
-names, the addresses, the report links — comes back unchanged.
+category per establishment; everything else — the heading, the boilerplate, the
+names, the addresses, the inspection types — comes back unchanged, in the order
+it was sent.
 
 The prompt tells the model to use nothing but the text it was handed. That is
 the whole point: these are an inspector's words about a named business, and a

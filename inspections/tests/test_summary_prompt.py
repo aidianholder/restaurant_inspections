@@ -28,6 +28,54 @@ class SeedTests(TestCase):
         self.assertEqual(SummaryPrompt.objects.count(), 1)
 
 
+class RetuneMigrationTests(TestCase):
+    """0013 retunes the shipped wording for the new output shape.
+
+    The behaviour that matters is what it does *not* touch: a newsroom's edits
+    are the reason this lives in a table at all, and a migration that overwrote
+    them would take that back.
+    """
+
+    def retune(self):
+        from django.apps import apps
+
+        from inspections.migrations import _0013 as migration
+
+        migration.retune(apps, None)
+
+    def test_an_untouched_prompt_is_retuned(self):
+        from inspections.migrations import _0013 as migration
+
+        SummaryPrompt.objects.filter(name=SHIPPED_PROMPT_NAME).update(
+            system_prompt=migration.PREVIOUS
+        )
+        self.retune()
+
+        prompt = SummaryPrompt.objects.get(name=SHIPPED_PROMPT_NAME)
+        self.assertEqual(prompt.system_prompt, migration.REPLACEMENT)
+        self.assertIn("the heading at the top", prompt.system_prompt)
+        self.assertNotIn("every date heading", prompt.system_prompt)
+        self.assertNotIn("every report link", prompt.system_prompt)
+
+    def test_an_edited_prompt_is_left_alone(self):
+        from inspections.migrations import _0013 as migration
+
+        edited = migration.PREVIOUS + "\n8. Keep it under 20 words."
+        SummaryPrompt.objects.filter(name=SHIPPED_PROMPT_NAME).update(system_prompt=edited)
+        self.retune()
+
+        self.assertEqual(
+            SummaryPrompt.objects.get(name=SHIPPED_PROMPT_NAME).system_prompt, edited
+        )
+
+    def test_the_replacement_is_what_the_code_ships(self):
+        """Change SYSTEM_PROMPT without a migration and existing installs keep
+        the old wording — this is the reminder."""
+        from inspections.migrations import _0013 as migration
+
+        self.assertEqual(migration.REPLACEMENT, SYSTEM_PROMPT)
+
+
 class ActivationTests(TestCase):
     def test_activating_one_deactivates_the_rest(self):
         seeded = SummaryPrompt.objects.get(name=SHIPPED_PROMPT_NAME)

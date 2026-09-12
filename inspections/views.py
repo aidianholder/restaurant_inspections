@@ -188,8 +188,6 @@ def output_data(request):
             form.cleaned_data["county"],
             form.cleaned_data["date_from"],
             form.cleaned_data["date_to"],
-            # Report links leave this site, so they have to be absolute.
-            base_url=request.build_absolute_uri("/"),
         )
 
     return render(
@@ -220,7 +218,6 @@ def output_summary(request):
         form.cleaned_data["county"],
         form.cleaned_data["date_from"],
         form.cleaned_data["date_to"],
-        base_url=request.build_absolute_uri("/"),
     )
     if not export.establishments:
         return JsonResponse({"error": "There is nothing to summarise."}, status=400)

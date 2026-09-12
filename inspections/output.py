@@ -2,8 +2,11 @@
 
 What comes out is a fragment, not a document: a newsroom CMS wants paragraphs
 and lists it can drop straight into an article body, so there is no <html>
-wrapper, no styling and no classes. Report links are made absolute, since the
-page they land on lives on someone else's domain.
+wrapper, no styling and no classes.
+
+One heading, the explanatory paragraphs, then every cited establishment in one
+alphabetical run. Inspections are not grouped by date and carry no date of their
+own — the range in the heading is the only date the reader gets.
 
 Only establishments with at least one *categorised* violation appear. The
 boilerplate promises that "only categories in which an establishment was cited
@@ -52,8 +55,15 @@ class Export:
 
 
 def _format_date(value):
-    """"August 4, 2026" — no %-d, which isn't portable."""
-    return f"{value:%B} {value.day}, {value.year}"
+    """"9/04/26" — month unpadded, day padded, two-digit year."""
+    return f"{value.month}/{value.day:02d}/{value:%y}"
+
+
+def _heading(county, date_from, date_to):
+    return (
+        f"{county} County health inspections "
+        f"{_format_date(date_from)} - {_format_date(date_to)}"
+    )
 
 
 def _observation_text(violation):
@@ -80,17 +90,7 @@ def _by_category(violations):
     ]
 
 
-def _report_url(inspection, base_url):
-    """Absolute link to the report, preferring our stored copy."""
-    if inspection.report_pdf:
-        url = inspection.report_pdf.url
-        if base_url and url.startswith("/"):
-            return base_url.rstrip("/") + url
-        return url
-    return inspection.report_source_url
-
-
-def build_export(county, date_from, date_to, base_url=""):
+def build_export(county, date_from, date_to):
     """Render every cited inspection in `county` between the two dates."""
     inspections = (
         Inspection.objects.filter(
@@ -98,14 +98,18 @@ def build_export(county, date_from, date_to, base_url=""):
         )
         .select_related("facility")
         .prefetch_related("violations__item")
-        # Alphabetical within a day, and case-folded: the state's names arrive in
-        # a mix of upper and title case, which a raw sort would interleave badly.
-        .order_by("date", Lower("facility__name"), "pk")
+        # One alphabetical run across the whole range, case-folded: the state's
+        # names arrive in a mix of upper and title case, which a raw sort would
+        # interleave badly. Date only breaks ties, so an establishment inspected
+        # twice reads in the order it happened.
+        .order_by(Lower("facility__name"), "date", "pk")
     )
 
-    lines = [f"<p>{escape(paragraph)}</p>" for paragraph in BOILERPLATE]
+    lines = [f"<h1>{escape(_heading(county, date_from, date_to))}</h1>", ""]
+    lines += [f"<p>{escape(paragraph)}</p>" for paragraph in BOILERPLATE]
+
     establishments = uncategorised = 0
-    current_date = None
+    dates = set()
 
     for inspection in inspections:
         violations = list(inspection.violations.all())
@@ -115,16 +119,10 @@ def build_export(county, date_from, date_to, base_url=""):
                 uncategorised += 1
             continue
 
-        if inspection.date != current_date:
-            current_date = inspection.date
-            # Every establishment already ends with a blank line; don't stack a
-            # second one on top of it before the heading.
-            lines += ([] if lines[-1] == "" else [""])
-            lines += [f"<h2>{escape(_format_date(inspection.date))}</h2>", ""]
-
         facility = inspection.facility
         establishments += 1
-        lines.append(f"<h3>{escape(facility.name)}</h3>")
+        dates.add(inspection.date)
+        lines += ["", f"<h3>{escape(facility.name)}</h3>"]
 
         detail = [escape(part) for part in (facility.address_display, inspection.inspection_type) if part]
         if detail:
@@ -136,15 +134,9 @@ def build_export(county, date_from, date_to, base_url=""):
             lines += [f"  <li>{escape(_observation_text(v))}</li>" for v in cited]
             lines.append("</ul>")
 
-        url = _report_url(inspection, base_url)
-        if url:
-            lines.append(f'<p><a href="{escape(url)}">Full inspection report</a></p>')
-        lines.append("")
-
-    days = sum(1 for line in lines if line.startswith("<h2>"))
     return Export(
         "\n".join(lines).strip() + "\n",
         establishments=establishments,
-        days=days,
+        days=len(dates),
         uncategorised=uncategorised,
     )

@@ -65,18 +65,50 @@ class ExportTests(TestCase):
             **kwargs,
         )
 
-    def test_boilerplate_leads_the_output(self):
+    def test_the_heading_names_the_county_and_the_range(self):
+        html = self.export(date_from=dt.date(2026, 9, 4), date_to=dt.date(2026, 9, 11)).html
+        self.assertTrue(
+            html.startswith("<h1>Pulaski County health inspections 9/04/26 - 9/11/26</h1>"),
+            html[:120],
+        )
+
+    def test_the_heading_uses_the_requested_range_not_the_inspection_dates(self):
+        # The reader is told what period was searched, not which days happened
+        # to produce a citation.
         html = self.export().html
-        self.assertTrue(html.startswith("<p>Violations marked as priority contribute directly"))
+        self.assertIn("8/01/26 - 8/31/26", html)
+        self.assertNotIn("8/03/26", html)
+
+    def test_boilerplate_follows_the_heading(self):
+        html = self.export().html
+        self.assertLess(
+            html.index("<h1>"),
+            html.index("<p>Violations marked as priority contribute directly"),
+        )
         self.assertIn("Only categories in which an establishment was cited are listed.", html)
 
-    def test_days_are_headed_and_ordered(self):
-        html = self.export().html
-        self.assertLess(html.index("<h2>August 3, 2026</h2>"), html.index("<h2>August 5, 2026</h2>"))
-
-    def test_establishments_are_alphabetical_within_a_day(self):
+    def test_establishments_are_alphabetical_across_the_whole_range(self):
+        # ZEBRA was inspected on the 3rd and APPLE on the 3rd too, but ZEBRA also
+        # on the 5th — under the old date grouping that split them up.
         html = self.export().html
         self.assertLess(html.index("APPLE GRILL"), html.index("ZEBRA CAFE"))
+
+    def test_no_dates_appear_in_the_body(self):
+        html = self.export().html
+        body = html[html.index("APPLE GRILL"):]
+        for fragment in ("August", "2026-08", "8/03", "8/05"):
+            self.assertNotIn(fragment, body)
+
+    def test_one_facility_inspected_twice_appears_twice_in_date_order(self):
+        html = self.export().html
+        first = html.index("ZEBRA CAFE")
+        second = html.index("ZEBRA CAFE", first + 1)
+        self.assertLess(
+            html.index("Floor tiles cracked.", first),
+            html.index("Employee did not wash hands.", first),
+            "the earlier inspection should come first",
+        )
+        self.assertGreater(second, first)
 
     def test_address_and_type_accompany_the_name(self):
         html = self.export().html
@@ -84,7 +116,8 @@ class ExportTests(TestCase):
 
     def test_categories_run_most_serious_first_and_omit_uncited(self):
         html = self.export().html
-        block = html[html.index("ZEBRA CAFE") : html.index("August 5")]
+        start = html.index("ZEBRA CAFE")
+        block = html[start : html.index("ZEBRA CAFE", start + 1)]
         self.assertLess(block.index("<strong>Priority</strong>"), block.index("<strong>Core</strong>"))
         self.assertNotIn("Priority Foundation", block)
         self.assertIn("<li>Milk held above 41 degrees.</li>", block)
@@ -92,8 +125,10 @@ class ExportTests(TestCase):
     def test_clean_inspection_is_left_out(self):
         self.assertNotIn("CLEAN PLATE", self.export().html)
 
-    def test_report_link_is_included(self):
-        self.assertIn('<a href="https://example.gov/report/1.pdf">', self.export().html)
+    def test_report_links_are_left_out(self):
+        html = self.export().html
+        self.assertNotIn("example.gov/report/1.pdf", html)
+        self.assertNotIn("<a ", html)
 
     def test_uncategorised_violations_are_excluded_but_counted(self):
         loner = make_facility("OVERLAY ONLY", street="9 Ash St")
@@ -109,6 +144,8 @@ class ExportTests(TestCase):
     def test_counts_reflect_what_was_rendered(self):
         export = self.export()
         self.assertEqual(export.establishments, 3)
+        # Distinct dates that produced a citation, not heading count — there are
+        # no date headings to count any more.
         self.assertEqual(export.days, 2)
 
     def test_date_range_and_county_bound_the_output(self):
