@@ -80,21 +80,32 @@ and send a long tail of misses to Django.
 
 ## Output data
 
-`/output/` turns stored inspections into an HTML fragment a desk can paste
-straight into a story: pick a county and a date range, press Output, copy the
-box. It is a fragment, not a document — paragraphs, headings and lists, no
-wrapper, no styling, no classes — because it is going into someone's CMS.
+`/output/` turns stored inspections into **Markdown** a desk can read, edit and
+publish: pick a county and a date range, press Output, and copy it either as
+HTML for the web or as text for InDesign.
+
+Markdown is the canonical artefact here, not an intermediate. A person edits the
+summary before it goes out, and once they do, their text is the authority — so
+there is no structured representation running alongside it that could drift.
+HTML is rendered from the Markdown on demand; the text an InDesign operator
+places *is* the Markdown, and any transform they want is a GREP find/change on
+their end.
 
 The shape is fixed:
 
-```html
-<h1>Faulkner County health inspections 9/04/26 - 9/11/26</h1>
+```markdown
+# Faulkner County health inspections 9/04/26 - 9/11/26
 ```
 
 then the four explanatory paragraphs about what priority, priority foundation
 and core mean, then every cited establishment in one alphabetical run — name,
 address, inspection type, one group per category it was cited under, and the
 inspector's own wording for each observation.
+
+Address and inspection type are separate paragraphs. They shared one with a
+`<br>` until this became Markdown, where a mid-paragraph line break is two
+trailing spaces — invisible whitespace that the first person to edit the
+document would destroy without noticing.
 
 The range in that heading is the *requested* range, not the span of days that
 happened to produce a citation: it tells the reader what period was searched.
@@ -108,6 +119,20 @@ Everything is read straight from the database. The observations are quotes from
 a public record, so they are reproduced verbatim; nothing is paraphrased on the
 way out.
 
+### Escaping
+
+Inspector prose is full of characters CommonMark reads as markup, and one of
+them matters a great deal: `<41F` is house style for a cold-holding violation
+and raw it is an HTML tag. `output.py` escapes the seven that change meaning
+inline — and only those, since backslashing every `.` and `-` would produce a
+document nobody can read, which would defeat the point of using Markdown. It
+also escapes block openers at the start of a paragraph, because addresses really
+do begin `#5 Highway 65`.
+
+Raw HTML passthrough is off in the renderer. By the time Markdown reaches it a
+person has been typing in a textarea, and a stray `<script>` pasted in from
+somewhere should land in the story as visible characters.
+
 ### Only cited establishments, only categorised violations
 
 A clean inspection has nothing to list and does not appear. Neither does a
@@ -119,11 +144,11 @@ report yet" are very different claims to make in print.
 
 ### Summarize with AI
 
-With `OPEN_AI_TOKEN` set, a second button sends the output to OpenAI and shows
-the shortened version in its own box, with its own copy button. One summary per
-category per establishment; everything else — the heading, the boilerplate, the
-names, the addresses, the inspection types — comes back unchanged, in the order
-it was sent.
+With `OPEN_AI_TOKEN` set, a second button shortens each establishment's
+observations — one summary per category — and drops the result into an
+**editable** box with a live preview beside it. Fix a sentence, cut an
+establishment, add one the model missed, then copy. Nothing is stored: the
+canonical version is whatever gets published.
 
 The prompt tells the model to use nothing but the text it was handed. That is
 the whole point: these are an inspector's words about a named business, and a
@@ -133,15 +158,41 @@ the box above it before publishing.
 
 The call goes through `/output/summarize/` on this server, never from the
 reader's browser, so the token stays server-side. That endpoint takes a county
-and a date range and rebuilds the export itself rather than accepting HTML
+and a date range and rebuilds the export itself rather than accepting Markdown
 posted to it — otherwise it would be an open pipe to the newsroom's OpenAI
 account for whatever text someone cared to POST at it.
+
+### Three things keep the document intact
+
+The model used to be handed the whole document and asked nicely to preserve it.
+Rules 3 and 4 in the shipped prompt are scar tissue from that. Now:
+
+* **The preamble is never sent.** The heading and the four explanatory
+  paragraphs are ours and fixed, so they are held back and re-attached
+  afterwards. A model cannot reword what it was never shown.
+* **Establishments go in batches** of `OPENAI_BATCH_SIZE`, up to
+  `OPENAI_MAX_PARALLEL` at a time. We generated the document, so we know where
+  every block begins and can cut on seams we wrote rather than asking a model to
+  respect them. A month of a large county becomes several small calls instead of
+  one that times out. A batch that fails fails the whole run — half a roundup is
+  worse than none, because it looks finished to whoever pastes it.
+* **What comes back is reconciled against what went in.** Every establishment
+  sent is expected back, by name. Any that are missing — or any the model
+  invented — are named in red above the editor. Dropping an establishment is the
+  failure this has actually hit, and a quietly short roundup is the worst way to
+  find out.
 
 `OPENAI_MODEL` picks the model (anything that speaks the chat completions API).
 No `temperature` or token cap is sent: which of the two the API accepts changes
 between model generations, and sending one the chosen model rejects fails the
 whole call. Without a token the button renders disabled and says why; the rest
 of the page works as normal.
+
+### Preview and Copy HTML share one code path
+
+`/output/render/` takes Markdown and returns HTML, and it backs both the live
+preview and the Copy HTML button. That is deliberate: a preview that can drift
+from what gets copied is worse than no preview at all.
 
 ### Tuning the prompt, in the admin
 
@@ -448,8 +499,9 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/ingest.py` | Drives the scraper, writes to the database |
 | `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
 | `inspections/embed_views.py` | Public embed page and loader script |
-| `inspections/output.py` | Stored inspections → pasteable HTML for a story |
-| `inspections/summarize.py` | Sends an export to OpenAI to be shortened, using the active `SummaryPrompt` |
+| `inspections/output.py` | Stored inspections → Markdown for a story |
+| `inspections/markdown_render.py` | Markdown → HTML, for the web copy and the editor's preview |
+| `inspections/summarize.py` | Batches an export to OpenAI to be shortened, and reconciles what comes back |
 | `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |
@@ -479,5 +531,11 @@ markup or report layout rather than silently importing empty rows.
 - `OPEN_AI_TOKEN` enables the summarise button on `/output/`. It is optional and
   read only on the server. Summarising happens in the request the button makes,
   not on the worker, so the web process needs an outbound route to the API and a
-  proxy timeout above `OPENAI_TIMEOUT` (120s by default) — a wide date range is a
-  long document and gunicorn's own 30s default will cut it off.
+  gunicorn `--timeout` comfortably above `OPENAI_TIMEOUT` (120s by default) —
+  gunicorn's own 30s default will cut it off. Batching keeps each call short, but
+  the request holds a worker for as long as the slowest batch takes.
+- `/output/` and its two POST endpoints are **unauthenticated**, like the rest of
+  the reader-facing site. `/output/summarize/` cannot be made to summarise
+  arbitrary text — it rebuilds the export from the database — but anyone who can
+  reach it can spend the OpenAI account, and one press is now several calls. If
+  the site is on the public internet, put that endpoint behind staff login.

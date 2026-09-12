@@ -10,7 +10,7 @@ from django.urls import reverse
 from inspections.models import Inspection, PriorityLevel, SummaryPrompt
 from inspections.summarize import SHIPPED_PROMPT_NAME, SYSTEM_PROMPT, summarize
 from inspections.tests.test_output import cite, make_facility
-from inspections.tests.test_summarize import SETTINGS, completion
+from inspections.tests.test_summarize import SETTINGS, block, completion, fake_export
 
 
 def make_prompt(name="Terser", **kwargs):
@@ -39,12 +39,12 @@ class RetuneMigrationTests(TestCase):
     def retune(self):
         from django.apps import apps
 
-        from inspections.migrations import _0013 as migration
+        from inspections.migrations import _latest_prompt as migration
 
         migration.retune(apps, None)
 
     def test_an_untouched_prompt_is_retuned(self):
-        from inspections.migrations import _0013 as migration
+        from inspections.migrations import _latest_prompt as migration
 
         SummaryPrompt.objects.filter(name=SHIPPED_PROMPT_NAME).update(
             system_prompt=migration.PREVIOUS
@@ -53,12 +53,11 @@ class RetuneMigrationTests(TestCase):
 
         prompt = SummaryPrompt.objects.get(name=SHIPPED_PROMPT_NAME)
         self.assertEqual(prompt.system_prompt, migration.REPLACEMENT)
-        self.assertIn("the heading at the top", prompt.system_prompt)
-        self.assertNotIn("every date heading", prompt.system_prompt)
-        self.assertNotIn("every report link", prompt.system_prompt)
+        self.assertIn("Return Markdown", prompt.system_prompt)
+        self.assertNotIn("HTML fragment", prompt.system_prompt)
 
     def test_an_edited_prompt_is_left_alone(self):
-        from inspections.migrations import _0013 as migration
+        from inspections.migrations import _latest_prompt as migration
 
         edited = migration.PREVIOUS + "\n8. Keep it under 20 words."
         SummaryPrompt.objects.filter(name=SHIPPED_PROMPT_NAME).update(system_prompt=edited)
@@ -71,7 +70,7 @@ class RetuneMigrationTests(TestCase):
     def test_the_replacement_is_what_the_code_ships(self):
         """Change SYSTEM_PROMPT without a migration and existing installs keep
         the old wording — this is the reminder."""
-        from inspections.migrations import _0013 as migration
+        from inspections.migrations import _latest_prompt as migration
 
         self.assertEqual(migration.REPLACEMENT, SYSTEM_PROMPT)
 
@@ -173,66 +172,66 @@ class SummarizeUsesTheActivePromptTests(TestCase):
 
     def test_the_active_rows_wording_is_sent(self):
         make_prompt(system_prompt="Be terse. Invent nothing.", is_active=True)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summary = summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summary = summarize(fake_export())
 
         self.assertEqual(self.sent(post)["messages"][0]["content"], "Be terse. Invent nothing.")
         self.assertEqual(summary.prompt, "Terser")
 
     def test_the_active_rows_template_wraps_the_export(self):
         make_prompt(user_template="Roundup:\n{html}", is_active=True)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export())
 
-        self.assertEqual(self.sent(post)["messages"][1]["content"], "Roundup:\n<p>long</p>")
+        self.assertTrue(self.sent(post)["messages"][1]["content"].startswith("Roundup:\n### TEST DINER"))
 
     def test_a_prompts_model_override_wins_over_the_setting(self):
         make_prompt(model="some-other-model", is_active=True)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export())
 
         self.assertEqual(self.sent(post)["model"], "some-other-model")
 
     def test_a_blank_model_override_falls_back_to_the_setting(self):
         make_prompt(is_active=True)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export())
 
         self.assertEqual(self.sent(post)["model"], "test-model")
 
     def test_an_edit_takes_effect_on_the_next_call_with_no_restart(self):
         prompt = make_prompt(system_prompt="First wording.", is_active=True)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export())
         self.assertEqual(self.sent(post)["messages"][0]["content"], "First wording.")
 
         prompt.system_prompt = "Second wording."
         prompt.save()
 
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export())
         self.assertEqual(self.sent(post)["messages"][0]["content"], "Second wording.")
 
     def test_an_emptied_table_falls_back_to_the_shipped_wording(self):
         SummaryPrompt.objects.all().delete()
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summary = summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summary = summarize(fake_export())
 
         self.assertEqual(self.sent(post)["messages"][0]["content"], SYSTEM_PROMPT)
         self.assertEqual(summary.prompt, SHIPPED_PROMPT_NAME)
 
     def test_no_active_row_falls_back_to_the_shipped_wording(self):
         SummaryPrompt.objects.update(is_active=False)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>")
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export())
 
         self.assertEqual(self.sent(post)["messages"][0]["content"], SYSTEM_PROMPT)
 
     def test_an_explicit_prompt_beats_the_active_row(self):
         make_prompt(system_prompt="The active one.", is_active=True)
         other = SummaryPrompt(name="Ad hoc", system_prompt="This one instead.")
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")) as post:
-            summarize("<p>long</p>", prompt=other)
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))) as post:
+            summarize(fake_export(), prompt=other)
 
         self.assertEqual(self.sent(post)["messages"][0]["content"], "This one instead.")
 
@@ -248,7 +247,7 @@ class SummaryViewReportsThePromptTests(TestCase):
 
     def test_the_response_names_the_prompt_that_ran(self):
         make_prompt(is_active=True)
-        with patch("inspections.summarize.requests.post", return_value=completion("<p>s</p>")):
+        with patch("inspections.summarize.requests.post", return_value=completion(block("TEST DINER"))):
             r = self.client.post(reverse("output-summary"), {
                 "county": "Pulaski", "date_from": "2026-08-01", "date_to": "2026-08-31",
             })
