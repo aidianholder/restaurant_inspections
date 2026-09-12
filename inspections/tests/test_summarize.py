@@ -160,7 +160,8 @@ class SummaryViewTests(TestCase):
             r = self.post()
         self.assertEqual(r.status_code, 200)
         self.assertEqual(json.loads(r.content), {
-            "html": "<p>Short.</p>", "model": "test-model-2026", "truncated": False,
+            "html": "<p>Short.</p>", "model": "test-model-2026",
+            "prompt": "Default", "truncated": False,
         })
 
     def test_summarises_the_rebuilt_export_not_posted_html(self):

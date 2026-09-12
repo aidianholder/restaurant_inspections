@@ -231,12 +231,16 @@ def output_summary(request):
         return JsonResponse({"error": str(exc)}, status=502)
 
     logger.info(
-        "Summarised %s establishments for %s with %s",
-        export.establishments, form.cleaned_data["county"], summary.model,
+        "Summarised %s establishments for %s with %s using prompt '%s'",
+        export.establishments, form.cleaned_data["county"], summary.model, summary.prompt,
     )
-    return JsonResponse(
-        {"html": summary.html, "model": summary.model, "truncated": summary.truncated}
-    )
+    return JsonResponse({
+        "html": summary.html,
+        "model": summary.model,
+        # Which wording produced this, so two summaries can be told apart.
+        "prompt": summary.prompt,
+        "truncated": summary.truncated,
+    })
 
 
 def _first_error(form):

@@ -9,6 +9,11 @@ The prompt is deliberately narrow. These are quotes from a public record, and a
 model that helpfully explains what a violation *means* would be putting words in
 an inspector's mouth, so it is told repeatedly to use nothing but the text it was
 handed.
+
+`SYSTEM_PROMPT` below is the wording that ships, seeded into `SummaryPrompt` by
+migration so it can be tuned in the admin without a deploy. It stays here as the
+fallback: an install that has never run the seed, or a table someone has emptied,
+summarises with this rather than failing.
 """
 
 import logging
@@ -56,6 +61,9 @@ only the contents of the lists.
 closing remarks.\
 """
 
+# What the seeded row is called, and what the screen reports when no row exists.
+SHIPPED_PROMPT_NAME = "Default"
+
 # Models return fenced HTML often enough to be worth handling rather than
 # pasting ```html into a story.
 _FENCE = re.compile(r"\A\s*```[a-zA-Z]*\s*\n(.*?)\n?\s*```\s*\Z", re.S)
@@ -64,10 +72,13 @@ _FENCE = re.compile(r"\A\s*```[a-zA-Z]*\s*\n(.*?)\n?\s*```\s*\Z", re.S)
 class Summary:
     """The shortened HTML, plus what the screen needs to say about it."""
 
-    def __init__(self, html, model="", truncated=False):
+    def __init__(self, html, model="", truncated=False, prompt=SHIPPED_PROMPT_NAME):
         self.html = html
         self.model = model
         self.truncated = truncated
+        # Which wording produced this. Without it, comparing two summaries means
+        # guessing which prompt made either.
+        self.prompt = prompt
 
     def __str__(self):
         return self.html
@@ -91,11 +102,17 @@ def _api_error(response):
     return f"OpenAI returned an error: {message}"
 
 
-def summarize(html, token=None, model=None, timeout=None, session=None):
+def summarize(html, token=None, model=None, timeout=None, session=None, prompt=None):
     """Send `html` to OpenAI and return the shortened version.
 
     Raises `SummaryError` for anything a person could act on — no token, a
     refused key, an unreachable API — so the view has one thing to catch.
+
+    `prompt` is a `SummaryPrompt`; omitted, the active row is read at call time.
+    Deliberately not cached: one query against a table of a few rows, next to a
+    call that takes half a minute, buys nothing — and a stale prompt would mean
+    "I changed it in the admin and nothing happened", which is the whole failure
+    this is meant to prevent.
     """
     token = token if token is not None else settings.OPENAI_TOKEN
     if not token:
@@ -106,11 +123,22 @@ def summarize(html, token=None, model=None, timeout=None, session=None):
     if not html.strip():
         raise SummaryError("There is nothing to summarise.")
 
+    if prompt is None:
+        from .models import SummaryPrompt
+
+        prompt = SummaryPrompt.active()
+
+    system_message = prompt.system_prompt if prompt else SYSTEM_PROMPT
+    user_message = prompt.render_user_message(html) if prompt else html
+    prompt_name = prompt.name if prompt else SHIPPED_PROMPT_NAME
+    if prompt is None:
+        logger.info("No active summary prompt; using the wording shipped in code.")
+
     payload = {
-        "model": model or settings.OPENAI_MODEL,
+        "model": model or (prompt.model if prompt else "") or settings.OPENAI_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": html},
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
         ],
         # No temperature and no token cap on purpose: which of those two the API
         # accepts changes between model generations, and sending one the chosen
@@ -157,4 +185,5 @@ def summarize(html, token=None, model=None, timeout=None, session=None):
         # The roundup runs long, and a summary that stops mid-establishment
         # looks finished unless we say otherwise.
         truncated=choice.get("finish_reason") == "length",
+        prompt=prompt_name,
     )
