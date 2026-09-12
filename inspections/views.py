@@ -9,11 +9,16 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django_q.tasks import async_task
 
 from .forms import FacilityFilterForm, OutputForm, ScrapeRequestForm
+from .markdown_render import markdown_to_html
 from .models import Facility, Inspection, ScrapeRun, Violation
 from .output import build_export
 from .summarize import SummaryError, summarize
 
 logger = logging.getLogger(__name__)
+
+# A month of a large county runs to a few hundred KB. Well clear of that, but
+# short of letting an open endpoint render something enormous.
+MAX_RENDER_CHARS = 2_000_000
 
 
 def scrape_request(request):
@@ -188,8 +193,6 @@ def output_data(request):
             form.cleaned_data["county"],
             form.cleaned_data["date_from"],
             form.cleaned_data["date_to"],
-            # Report links leave this site, so they have to be absolute.
-            base_url=request.build_absolute_uri("/"),
         )
 
     return render(
@@ -205,9 +208,9 @@ def output_summary(request):
     """Shorten an export's observations via OpenAI. Posted to, answers JSON.
 
     Takes the same county and date range the export was built from and rebuilds
-    it here rather than accepting HTML from the browser. Two reasons: the summary
-    is then provably of our own data, and the endpoint can't be used to spend the
-    newsroom's OpenAI account on arbitrary text someone posts at it.
+    it here rather than accepting Markdown from the browser. Two reasons: the
+    summary is then provably of our own data, and the endpoint can't be used to
+    spend the newsroom's OpenAI account on arbitrary text someone posts at it.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -220,13 +223,12 @@ def output_summary(request):
         form.cleaned_data["county"],
         form.cleaned_data["date_from"],
         form.cleaned_data["date_to"],
-        base_url=request.build_absolute_uri("/"),
     )
     if not export.establishments:
         return JsonResponse({"error": "There is nothing to summarise."}, status=400)
 
     try:
-        summary = summarize(export.html)
+        summary = summarize(export)
     except SummaryError as exc:
         return JsonResponse({"error": str(exc)}, status=502)
 
@@ -235,12 +237,34 @@ def output_summary(request):
         export.establishments, form.cleaned_data["county"], summary.model, summary.prompt,
     )
     return JsonResponse({
-        "html": summary.html,
+        "markdown": summary.markdown,
         "model": summary.model,
         # Which wording produced this, so two summaries can be told apart.
         "prompt": summary.prompt,
         "truncated": summary.truncated,
+        # Named on screen: an establishment quietly dropped from a roundup is
+        # the one failure a reader would never catch.
+        "missing": summary.missing,
+        "unexpected": summary.unexpected,
     })
+
+
+def output_render(request):
+    """Markdown in, HTML out. Backs the live preview and the Copy HTML button.
+
+    Both go through here so the preview is by construction what gets copied —
+    a preview that can drift from the real output is worse than none.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    markdown = request.POST.get("markdown", "")
+    if len(markdown) > MAX_RENDER_CHARS:
+        return JsonResponse(
+            {"error": "That's larger than this page will render. Narrow the date range."},
+            status=400,
+        )
+    return JsonResponse({"html": markdown_to_html(markdown)})
 
 
 def _first_error(form):

@@ -1,9 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Output inspections{% endblock %}
 {% block content %}
+<style>
+  .panel { margin-top: 32px; }
+  .panel-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .panel-head h2 { margin: 0; font-size: 18px; }
+  .panel-head .spacer { margin-left: auto; }
+  .doc { width: 100%; padding: 12px; border: 1px solid #c9c5bd; border-radius: 4px;
+         font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #fff; resize: vertical; }
+  .btn-small { padding: 6px 14px; font-size: 13px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+  .preview { border: 1px solid var(--line); border-radius: 4px; background: #fff;
+             padding: 14px 16px; height: 520px; overflow: auto; }
+  .preview h1 { font-size: 20px; margin: 0 0 12px; }
+  .preview h3 { font-size: 15px; margin: 18px 0 6px; }
+  .preview p { margin: 0 0 8px; font-size: 14px; }
+  .preview ul { margin: 0 0 10px; padding-left: 20px; font-size: 14px; }
+  .note { font-size: 13px; margin: 10px 0 0; }
+  .note.warn { color: var(--warn); }
+  .note.bad { color: var(--accent); }
+</style>
+
 <h2>Output inspections</h2>
-<p class="sub">Pick a county and a date range. The result is ready-to-paste HTML covering every
-   establishment cited in that window, day by day.</p>
+<p class="sub">Pick a county and a date range. The result is Markdown — edit the summary if you
+   need to, then copy it as HTML for the web or as text for InDesign.</p>
 
 <div class="card">
   <form method="get">
@@ -31,56 +53,63 @@
 
 {% if export %}
   {% if export.establishments %}
-    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:32px 0 8px">
-      <h2 style="margin:0;font-size:18px">
-        {{ export.establishments }} establishment{{ export.establishments|pluralize }}
-        over {{ export.days }} day{{ export.days|pluralize }}</h2>
-      <button type="button" class="copy" data-target="output"
-              style="margin-left:auto;padding:6px 14px;font-size:13px">Copy HTML</button>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>{{ export.establishments }} establishment{{ export.establishments|pluralize }}
+            over {{ export.days }} day{{ export.days|pluralize }}</h2>
+        <span class="spacer"></span>
+        <button type="button" class="btn-small copy-text" data-target="output">Copy text</button>
+        <button type="button" class="btn-small copy-html" data-target="output">Copy HTML</button>
+      </div>
+      <textarea id="output" class="doc" readonly rows="20" spellcheck="false">{{ export.markdown }}</textarea>
+      {% if export.uncategorised %}
+        <p class="note warn">
+          {{ export.uncategorised }} inspection{{ export.uncategorised|pluralize }} in this range
+          {{ export.uncategorised|pluralize:"has,have" }} violations that were never sorted into
+          priority, priority foundation or core — those come from the report PDF, which hasn't been
+          parsed for {{ export.uncategorised|pluralize:"this inspection,these inspections" }}. They
+          are left out above.</p>
+      {% endif %}
     </div>
-    <textarea id="output" readonly rows="24" spellcheck="false"
-              style="width:100%;padding:12px;border:1px solid #c9c5bd;border-radius:4px;
-                     font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-                     background:#fff;resize:vertical">{{ export.html }}</textarea>
-    {% if export.uncategorised %}
-      <p class="sub" style="margin-top:10px;color:#9a6700">
-        {{ export.uncategorised }} inspection{{ export.uncategorised|pluralize }} in this range
-        {{ export.uncategorised|pluralize:"has,have" }} violations that were never sorted into
-        priority, priority foundation or core — those come from the report PDF, which hasn't been
-        parsed for {{ export.uncategorised|pluralize:"this inspection,these inspections" }}. They
-        are left out above.</p>
-    {% endif %}
 
     <p style="margin:18px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <button type="button" id="summarize"{% if not summary_available %} disabled style="background:#c9c5bd;cursor:not-allowed"{% endif %}>Summarize with AI</button>
+      <button type="button" id="summarize" {% if not summary_available %}disabled style="background:#c9c5bd;cursor:not-allowed"{% endif %}>Summarize with AI</button>
       <span class="sub" id="summarize-note" style="margin:0">
         {% if summary_available %}
-          Shortens each establishment's observations, one summary per category. Check it against
-          the text above before it runs.
+          Shortens each establishment's observations, one summary per category. You can edit the
+          result before copying it.
         {% else %}
           Set <code>OPEN_AI_TOKEN</code> in the environment to enable this.
         {% endif %}
       </span>
     </p>
 
-    <div id="summary-block" hidden>
-      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:28px 0 8px">
-        <h2 style="margin:0;font-size:18px">AI summary</h2>
+    <div class="panel" id="summary-block" hidden>
+      <div class="panel-head">
+        <h2>AI summary</h2>
         <span class="sub" id="summary-model" style="margin:0"></span>
-        <button type="button" class="copy" data-target="summary"
-                style="margin-left:auto;padding:6px 14px;font-size:13px">Copy HTML</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn-small copy-text" data-target="summary">Copy text</button>
+        <button type="button" class="btn-small copy-html" data-target="summary">Copy HTML</button>
       </div>
-      <textarea id="summary" readonly rows="24" spellcheck="false"
-                style="width:100%;padding:12px;border:1px solid #c9c5bd;border-radius:4px;
-                       font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-                       background:#fff;resize:vertical"></textarea>
-      <p class="sub" id="summary-truncated" hidden style="margin-top:10px;color:#9a6700">
-        The model hit its length limit, so this summary stops early. Narrow the date range and
-        run it again.</p>
+      <p class="note bad" id="summary-missing" hidden></p>
+      <p class="note warn" id="summary-truncated" hidden>
+        The model hit its length limit, so part of this summary stops early. Narrow the date range
+        and run it again.</p>
+      <div class="split">
+        <textarea id="summary" class="doc" rows="24" spellcheck="false"
+                  style="height:520px"></textarea>
+        <div class="preview" id="summary-preview"></div>
+      </div>
+      <p class="sub" style="margin-top:8px">Editable. The panel on the right is exactly what
+         Copy HTML will give you. Read it against the output above before publishing.</p>
     </div>
 
     <script>
       (function () {
+        const CSRF = '{{ csrf_token }}';
+        const RENDER_URL = '{% url "output-render" %}';
+
         function flash(button, text) {
           const original = button.dataset.label || button.textContent;
           button.dataset.label = original;
@@ -88,23 +117,75 @@
           setTimeout(function () { button.textContent = original; }, 1500);
         }
 
-        document.querySelectorAll('button.copy').forEach(function (button) {
+        function copy(button, value, label) {
+          const done = function () { flash(button, label); };
+          // The clipboard API needs a secure context; the textarea fallback keeps
+          // these working over plain HTTP on an internal host.
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(value).then(done, function () { fallback(value); done(); });
+          } else { fallback(value); done(); }
+        }
+
+        function fallback(value) {
+          const scratch = document.createElement('textarea');
+          scratch.value = value;
+          scratch.style.position = 'fixed';
+          scratch.style.opacity = '0';
+          document.body.appendChild(scratch);
+          scratch.select();
+          try { document.execCommand('copy'); } finally { document.body.removeChild(scratch); }
+        }
+
+        function render(markdown) {
+          const body = new URLSearchParams({ csrfmiddlewaretoken: CSRF, markdown: markdown });
+          return fetch(RENDER_URL, { method: 'POST', body: body })
+            .then(function (r) { return r.json().then(function (d) {
+              if (!r.ok) { throw new Error(d.error || 'That could not be rendered.'); }
+              return d.html;
+            }); });
+        }
+
+        document.querySelectorAll('button.copy-text').forEach(function (button) {
           button.addEventListener('click', function () {
-            const box = document.getElementById(button.dataset.target);
-            box.select();
-            const done = function () { flash(button, 'Copied'); };
-            // The clipboard API needs a secure context; the selection fallback
-            // keeps the button working over plain HTTP on an internal host.
-            if (navigator.clipboard) {
-              navigator.clipboard.writeText(box.value).then(done, function () {
-                document.execCommand('copy'); done();
-              });
-            } else { document.execCommand('copy'); done(); }
+            copy(button, document.getElementById(button.dataset.target).value, 'Copied');
+          });
+        });
+
+        document.querySelectorAll('button.copy-html').forEach(function (button) {
+          button.addEventListener('click', function () {
+            button.disabled = true;
+            render(document.getElementById(button.dataset.target).value)
+              .then(function (html) { copy(button, html, 'Copied HTML'); })
+              .catch(function (error) { flash(button, 'Failed'); console.error(error); })
+              .finally(function () { button.disabled = false; });
           });
         });
 
         const summarize = document.getElementById('summarize');
         if (!summarize || summarize.disabled) { return; }
+
+        const box = document.getElementById('summary');
+        const preview = document.getElementById('summary-preview');
+        let edited = false;
+        let timer = null;
+
+        function refreshPreview() {
+          render(box.value)
+            .then(function (html) { preview.innerHTML = html; })
+            .catch(function (error) { preview.textContent = error.message; });
+        }
+
+        box.addEventListener('input', function () {
+          edited = true;
+          clearTimeout(timer);
+          timer = setTimeout(refreshPreview, 400);
+        });
+
+        // Nothing is stored server-side, so a closed tab loses an edited summary
+        // and regenerating costs another call and returns different words.
+        window.addEventListener('beforeunload', function (event) {
+          if (edited) { event.preventDefault(); event.returnValue = ''; }
+        });
 
         summarize.addEventListener('click', function () {
           const note = document.getElementById('summarize-note');
@@ -113,7 +194,7 @@
           // screen was built from, and the user may have typed something new
           // into the form without pressing Output.
           const body = new URLSearchParams(window.location.search);
-          body.set('csrfmiddlewaretoken', '{{ csrf_token }}');
+          body.set('csrfmiddlewaretoken', CSRF);
 
           summarize.disabled = true;
           summarize.textContent = 'Summarizing…';
@@ -126,12 +207,29 @@
             })
             .then(function (result) {
               if (!result.ok) { throw new Error(result.data.error || 'The summary failed.'); }
-              document.getElementById('summary').value = result.data.html;
+              const data = result.data;
+              box.value = data.markdown;
+              edited = false;
               document.getElementById('summary-model').textContent =
-                [result.data.prompt, result.data.model].filter(Boolean).join(' · ');
-              document.getElementById('summary-truncated').hidden = !result.data.truncated;
+                [data.prompt, data.model].filter(Boolean).join(' · ');
+              document.getElementById('summary-truncated').hidden = !data.truncated;
+
+              const problems = [];
+              if (data.missing && data.missing.length) {
+                problems.push(data.missing.length + ' establishment(s) went in but did not come ' +
+                              'back: ' + data.missing.join(', ') + '. Add them by hand, or run it again.');
+              }
+              if (data.unexpected && data.unexpected.length) {
+                problems.push('The model returned ' + data.unexpected.length +
+                              ' establishment(s) that were not sent: ' + data.unexpected.join(', ') + '.');
+              }
+              const missingNote = document.getElementById('summary-missing');
+              missingNote.textContent = problems.join(' ');
+              missingNote.hidden = problems.length === 0;
+
               block.hidden = false;
-              note.textContent = 'Read it against the output above before publishing.';
+              note.textContent = 'Edit it if you need to, then copy.';
+              refreshPreview();
               block.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             })
             .catch(function (error) {
