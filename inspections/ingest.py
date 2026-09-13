@@ -16,6 +16,7 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 
+from . import latest_inspection
 from .geocoding import locate_facility
 from .models import (
     Facility, Inspection, ScrapeRun, Violation, ViolationItem, ViolationSource, fingerprint,
@@ -104,6 +105,10 @@ def run_scrape(run_id):
         user_agent=settings.SCRAPER_USER_AGENT,
     )
 
+    # Facilities this run touched, refreshed once at the end rather than on
+    # every write. See inspections/latest_inspection.py.
+    touched = set()
+
     try:
         page, form_state = client.search(run.county, run.date_from, run.date_to)
         total_pages = page["total_pages"]
@@ -117,6 +122,7 @@ def run_scrape(run_id):
             for fdata in page["facilities"]:
                 with transaction.atomic():
                     facility, fcreated = upsert_facility(fdata, run.county)
+                    touched.add(facility.pk)
                     if fcreated:
                         run.facilities_created += 1
 
@@ -162,6 +168,16 @@ def run_scrape(run_id):
         run.error = f"{type(exc).__name__}: {exc}"
         run.progress_note = "Failed"
     finally:
+        # Even a run that died partway through leaves facilities whose newest
+        # inspection changed, so this belongs in `finally`. Its own failure must
+        # not replace whatever error actually stopped the run.
+        try:
+            changed = latest_inspection.refresh(touched)
+            if changed:
+                logger.info("Refreshed latest-inspection columns for %s facilities", changed)
+        except Exception:
+            logger.exception("Could not refresh latest-inspection columns after run %s", run_id)
+
         run.finished_at = timezone.now()
         run.save()
 

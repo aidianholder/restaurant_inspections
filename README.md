@@ -239,6 +239,72 @@ the form. If more than one person has access and that isn't comfortable, the
 stricter arrangement is a fixed provenance preamble in code concatenated with the
 editable rules from the row.
 
+## Dashboards
+
+A `Dashboard` is one newspaper's public map-and-table view over its readership
+area — several counties, a MapLibre map above a searchable, sortable, paginated
+table, the two kept in sync. Distinct from `Embed`, which is a single cached
+table for one county.
+
+Configure it in the admin (counties, rows per page, title) and hand the newsroom
+the snippet. Two ways to mount it, both from the same bundle and the same API:
+
+```html
+<!-- preferred: mounts into the paper's own page -->
+<div data-arhi-dashboard></div>
+<script src="https://…/dashboard/<slug>/embed.js" async></script>
+
+<!-- fallback for a site we don't control -->
+<iframe src="https://…/dashboard/<slug>/" style="width:100%;border:0;height:1200px"></iframe>
+```
+
+The component is the default because WEHCO controls the papers' CSS and CSP,
+which removes both arguments for an iframe — and mounting directly means deep
+links and the back button work, and a pan-zoom map does not fight a phone's
+scroll. `design_note.md` has the full reasoning.
+
+### Why it is an API and not a rendered table
+
+Server-side paging is *what an API does*; it was never an argument for
+server-rendering. Three read-only `JsonResponse` endpoints:
+
+| Endpoint | Returns |
+|---|---|
+| `api/rows` | One page of the table, with each row's violations for the dropdown |
+| `api/map` | Every facility matching the filters, as GeoJSON |
+| `api/facility/<id>` | One row, for a pin click whose row is on another page |
+
+**The map reflects the filter state, never the sort or the page.** Sorting
+reorders rows without changing which facilities match, so a column click costs
+one request and the map is untouched; paging shows a different slice of the same
+matches, and a map showing only page one would be useless. That is what makes
+rapid sorting free rather than expensive.
+
+Measured on 1,919 facilities across seven counties, the map payload is 446KB raw
+and **85KB gzipped** — `map` and `rows` are gzipped by decorator rather than by
+global middleware, because compressing every response, including admin pages with
+a CSRF token beside reflected search terms, is the setup BREACH needs.
+
+### Front end
+
+No build step. Plain ES modules in `inspections/static/inspections/dashboard/`,
+with MapLibre vendored beside them.
+
+- Every class is prefixed `arhi-` and **no ids are used anywhere** — WEHCO's
+  weather features already own `#map`, and the surest way not to collide is to
+  have nothing to collide with.
+- MapLibre is imported as an ES module, so no `window.maplibregl` is ever
+  created for two features to fight over. Vendoring it means **three** files:
+  `maplibre-gl.mjs`, `maplibre-gl-shared.mjs`, and `maplibre-gl-worker.mjs`. The
+  worker is resolved relative to `import.meta.url`; without it the map silently
+  never finishes loading, with no console error.
+- Sized by container query, not viewport: the component's width comes from
+  whatever column it is dropped into. Map height 360/460/560px; table columns
+  drop rather than truncate, since the dropdown carries everything anyway.
+- `DASHBOARD_MAP_STYLE` picks the basemap, defaulting to OpenFreeMap. Pointing it
+  at the self-hosted `protostyle3.json` also needs the pmtiles library vendored,
+  since that style's source is a `pmtiles://` URL.
+
 ## Scheduled scrapes
 
 Each county can carry a standing instruction to re-scrape itself — cadence, the day
@@ -384,7 +450,22 @@ It returns real address points rather than interpolated street ranges, is alread
 WGS84, and resolves Arkansas addresses the Census data has never heard of. On a
 sample of 169 facilities it located 153; Census managed 3 more.
 
-**Fallback: the Census Bureau geocoder** — free, public, no API key.
+**Supplement: the [NG911/USPS address lookup](https://gis.arkansas.gov/arcgis/rest/services/Locator/NG911_USPS_Address_Lookup/GeocodeServer)**,
+built on the address points counties maintain for emergency dispatch. Same Esri
+API, same fields, same WGS84, so it costs almost nothing to call.
+
+It is a supplement and not a replacement, which is worth being precise about
+because it looks like an upgrade. Measured against the composite locator on 25
+real failures it rescued exactly one — a duplicated address string
+(`8350 WARDEN ROAD 8350 WARDEN ROAD 8350 WARD`) that its parser recovered from
+and the composite's did not. On clean addresses the two agree exactly, type and
+score. On messy ones NG911 more often returns nothing at all where the composite
+at least returns a `Locality`. And it is readier to invent a confident match: it
+turned `ROUTE 2, BOX 8` into a street called "PO BOX" at score 82. Hence a
+minimum score of 90 rather than 80, plus an explicit refusal of any match to a
+PO box — a mail destination is not a place.
+
+**Last resort: the Census Bureau geocoder** — free, public, no API key.
 
 Matches are accepted only at address precision. The Arkansas locator answers
 nearly *every* query, so the `Addr_type` filter is what makes it safe: a
@@ -393,6 +474,26 @@ whole street, and accepting either would scatter pins across town centres.
 Accepted types and the minimum `Score` are in settings. Whatever matched — type
 and score included — is stored in `geocode_matched_address`, so a questionable
 match is visible rather than silent.
+
+### The admin's basemap
+
+Django's GIS widget defaults to OpenStreetMap's public tile server, which blocks
+sustained use — as its tile usage policy says it will. `inspections/widgets.py`
+swaps the basemap for [OpenFreeMap](https://openfreemap.org/) vector tiles: no
+API key, no usage limits, and a self-contained style whose glyphs and sprites
+resolve from the same host, so there is nothing extra to host or keep alive.
+
+Only the basemap changes. Placing, dragging and clearing the point, and the
+GeoJSON serialisation behind it, are still Django's — `MapWidget.layerBuilder` is
+the documented extension point for exactly this, so none of that had to be
+reimplemented to change a tile source. The OpenLayers version is unpacked from
+Django's own widget media rather than pinned, so it tracks whatever Django ships.
+
+Two details worth knowing if it ever looks wrong. The style's `background` layer
+belongs to no source, so applying the style per-source skips it — the land colour
+comes from CSS on `.dj_map` instead, and must match the style if you change it.
+And `ol-mapbox-style` is pinned at 12.2.1, the last release whose peer range still
+covers the OpenLayers 7.2.2 that Django bundles.
 
 ### Why the state's own map coordinates aren't used
 
@@ -410,12 +511,30 @@ re-run with `--force`.
 
 ### Addresses that can't be geocoded
 
-Some facilities are unlocatable because the state's own address is wrong or
-stale, not because the geocoders failed — a dozen Simmons Bank Arena concession
-stands are still filed under `ONE VERIZON ARENA WAY`. Those are counted in
-`geocode_attempts` and abandoned after `MAX_GEOCODE_ATTEMPTS` so later scrapes
-don't re-query them forever; fix them by dropping a pin on the map widget in the
-admin, which records the point as `manual`.
+**Almost every remaining failure is a bad address, not a geocoder that needs
+replacing.** On a real sample of 25, three clusters accounted for 20 of them:
+
+- **12 — `ONE VERIZON ARENA WAY`.** The arena was renamed; `1 Simmons Bank Arena
+  Way` resolves at PointAddress 98 in *both* locators. Eleven of those twelve are
+  concession stands in that one building. No geocoder resolves a street name that
+  no longer exists.
+- **6 — `N BUSINESS 9`, Morrilton.** Both locators reach `StreetName` and stop.
+  `1621 N Highway 9 B` gives StreetAddress 98, but the match comes back as
+  `1621 HIGHWAY 9` with the B dropped, which may be a different road — worth
+  checking against a map before rewriting six addresses on the strength of it.
+- **2 — repeated or concatenated strings.** `raw_address` shows these arrived
+  from ADH that way, truncated around 43 characters at the source. Not our
+  parser.
+
+The rest are genuinely unaddressable: a rural-route box, a road intersection with
+no house number, a mangled cove name.
+
+Retrying never fixes any of this, so when `geocode_attempts` reaches
+`MAX_GEOCODE_ATTEMPTS` the facility is flagged `address_needs_review` and
+abandoned. `FacilityAdmin` sorts flagged rows to the top, which puts them in front
+of someone who can correct the address once — fix by dropping a pin on the map
+widget, which records the point as `manual`. Nothing ever clears the flag
+automatically: a person unticks it when the address is right.
 
 ```bash
 .venv/bin/python manage.py geocode_facilities            # only the unlocated
@@ -425,6 +544,53 @@ admin, which records the point as `manual`.
 
 The Arkansas locator also exposes a batch endpoint (`geocodeAddresses`, up to
 1,000 per call), worth adopting if backfills ever run to thousands of rows.
+
+## Latest-inspection columns
+
+`Facility` carries a denormalised summary of its own newest inspection:
+`latest_inspection`, `latest_inspection_date`, `latest_inspection_type`,
+`latest_violation_total`, `latest_priority`, `latest_priority_foundation`,
+`latest_core`, and `inspection_count`.
+
+**The violation counts describe the latest inspection alone, never the facility's
+history.** MI PUEBLITO has 25 inspections on record and 32 violations across all
+of them, but it was clean on 24 August 2026, so `latest_violation_total` is 0.
+Storing the lifetime figure would brand a currently-clean restaurant with 32
+violations. `inspection_count` is the one field here that covers everything — and
+it counts inspections, not violations.
+
+### Why they exist
+
+Not speed, mostly. A correlated subquery over 10,000 facilities runs in about
+26ms, which is fine. What the columns buy is reach: violation counts used to be
+attached *after* paging, so you could not order by them, and the dashboard needs
+that column sortable. Working around it means a subquery whose `OuterRef` points
+at another annotation — the fragile shape the old
+`views._attach_latest_violation_counts` existed to avoid. Measured at 10,000
+facilities, sorting by violation count went from 35.5ms to 0.7ms, which also
+buys headroom for a public page when a story spikes traffic.
+
+### How they stay true
+
+Recomputed, never incrementally maintained. Four places change the answer — a new
+inspection, the website overlay writing violations, a report PDF replacing them,
+someone editing violations in the admin — and hooking each one is how derived
+columns go quietly wrong.
+
+- Every scrape run refreshes the facilities it touched, in a `finally` so a run
+  that dies partway still leaves them correct.
+- `InspectionAdmin` refreshes on inline edits and deletions, the one path a
+  person can reach without a run.
+- Everything else is `manage.py rebuild_latest_inspection`.
+
+```bash
+.venv/bin/python manage.py rebuild_latest_inspection --check     # audit, writes nothing
+.venv/bin/python manage.py rebuild_latest_inspection             # rebuild all
+.venv/bin/python manage.py rebuild_latest_inspection --county Pulaski
+```
+
+The refresh only writes rows whose values actually differ, so `--check` can run
+it inside a rolled-back transaction and report honestly how many are stale.
 
 ## What each run stores
 
@@ -499,10 +665,13 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/ingest.py` | Drives the scraper, writes to the database |
 | `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
 | `inspections/embed_views.py` | Public embed page and loader script |
+| `inspections/dashboard_views.py` | Per-newspaper dashboard: JSON API, page, and mount script |
 | `inspections/output.py` | Stored inspections → Markdown for a story |
 | `inspections/markdown_render.py` | Markdown → HTML, for the web copy and the editor's preview |
 | `inspections/summarize.py` | Batches an export to OpenAI to be shortened, and reconciles what comes back |
-| `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
+| `inspections/geocoding.py` | Arkansas-GIS-then-NG911-then-Census location lookup |
+| `inspections/latest_inspection.py` | Rebuilds Facility's denormalised latest-inspection columns |
+| `inspections/widgets.py` | The admin's map widget, on OpenFreeMap vector tiles |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |
 | `inspections/violation_items.py` | The 57 numbered form items, extracted from the reports |

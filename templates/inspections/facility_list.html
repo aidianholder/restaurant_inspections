@@ -55,7 +55,7 @@
         <span style="color:#888;font-size:12px">{{ f.street }}</span></td>
     <td>{{ f.city }}</td>
     <td>{{ f.county }}</td>
-    <td>{{ f.latest_inspection|default:"—" }}
+    <td>{{ f.latest_inspection_date|default:"—" }}
       {% if f.latest_inspection_type %}
         <br><span class="pill">{{ f.latest_inspection_type }}</span>
       {% endif %}
