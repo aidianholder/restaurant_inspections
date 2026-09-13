@@ -161,8 +161,15 @@ there is no `window.maplibregl` global for the two features to fight over.
 ### What stays server-rendered
 
 The per-facility history page. That is content — linkable, quotable, worth
-indexing — and `facility_detail` already exists. The dashboard's "click through to
-this facility" requirement should just link there.
+indexing.
+
+**Built as a second view, not a reuse of `facility_detail`.** The staff page
+carries coordinates, the geocoder used, the "state site shows N" badge, and
+inspections whose details have never been fetched — none of which belongs in
+front of a reader, and all of which the staff need. One template with
+`{% if request.user.is_staff %}` around the sensitive parts is how that leaks;
+a separate template cannot render what it does not contain. It also has no site
+navigation, because the staff pages are going behind a VPN or a login.
 
 The dashboard itself is a tool, not an article. Nobody needs Google to index a
 filter state.
@@ -179,8 +186,10 @@ static object. No key, no per-view cost, no rate limit, no third party that can
 throttle you mid-story. For a fixed geographic area that never changes, a very
 good fit. MapTiler or Stadia are the hosted alternatives.
 
-**Settled, 2026-09-12.** `wehco.pmtiles` on DigitalOcean Spaces, with
-`protostyle3.json`. The archive measured well — clustered, 2.7KB root directory,
+**Settled, 2026-09-12, and in use by the dashboard since 2026-09-13.**
+`wehco.pmtiles` on DigitalOcean Spaces, with `protostyle3.json`. Using it costs
+two more vendored files — `pmtiles.js` and `fflate.js` — plus an `addProtocol`
+call before the map is built. The archive measured well — clustered, 2.7KB root directory,
 834 leaf dirs averaging 7.7KB, z0–15 — and the CDN served cold random ranges at a
 95ms median, three times faster than the Spaces origin. Sixty parallel cold
 ranges completed in 242ms, so a viewport's worth of tiles is not a concern.
@@ -373,6 +382,13 @@ forever. That cost more debugging than anything else in the build.
 **MapLibre's ESM build has no default export.** `import maplibregl from …` fails
 with a clear error; named imports are required. Which is arguably better — it
 makes what the component uses explicit.
+
+**Self-hosted glyphs constrain how font stacks may be written.** MapLibre joins
+a multi-font stack into one comma-separated glyph URL. A hosted service resolves
+that server-side; a static bucket has no such directory, so every stack must name
+exactly one font. And `text-font` has to be set at the layer level as well as
+inside a `format` expression, or MapLibre additionally resolves its own composite
+default. Both failures are silent — the labels simply do not draw.
 
 **There is no public getter for a GeoJSON source's data.** Reaching into
 `source._data` to find a feature by id works right up until MapLibre renames a

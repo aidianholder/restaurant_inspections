@@ -48,7 +48,9 @@ class ViewTests(TestCase):
         self.assertNotContains(r, "TEST DINER")
 
     def test_facility_detail_shows_violation_text(self):
-        r = self.client.get(self.facility.get_absolute_url())
+        # The staff view explicitly: get_absolute_url is now the reader-facing
+        # establishment page, which carries no regulation codes.
+        r = self.client.get(reverse("facility-detail", args=[self.facility.slug]))
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "Milk held above 41 degrees.")
         self.assertContains(r, "20 CAR 192-501 (f)")

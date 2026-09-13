@@ -12,6 +12,10 @@ urlpatterns = [
     path("retrieve/<int:pk>/", views.scrape_detail, name="scrape-detail"),
     path("retrieve/<int:pk>/status/", views.scrape_status, name="scrape-status"),
 
+    # Reader-facing establishment page, linked from the dashboard. Public, like
+    # everything under /dashboard/ and /embed/ — unlike the staff views above.
+    path("establishment/<slug:slug>/", dashboard_views.establishment, name="establishment"),
+
     # Per-newspaper dashboard: a JSON API, a canonical page, and a loader that
     # mounts the same component into a paper's own template.
     path("dashboard/<slug:slug>/", dashboard_views.page, name="dashboard-page"),

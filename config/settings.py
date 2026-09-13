@@ -201,14 +201,24 @@ OPENAI_BATCH_SIZE = int(os.getenv("OPENAI_BATCH_SIZE", "10"))
 # way there by four, and beyond that a wide range starts tripping rate limits.
 OPENAI_MAX_PARALLEL = int(os.getenv("OPENAI_MAX_PARALLEL", "4"))
 
-# Basemap for the public dashboard. OpenFreeMap by default: no key, no usage
-# limits, and a self-contained style whose glyphs and sprites come from the same
-# host. Point it at the self-hosted protostyle3.json once the Noto fonts are in
-# the bucket — that needs the pmtiles library vendored alongside MapLibre, since
-# the style's source is a pmtiles:// URL.
+# Basemap for the public dashboard: our own PMTiles archive, served as a static
+# object from DigitalOcean Spaces. Self-hosted on purpose — a newspaper embed
+# spikes the day a story runs, which is exactly when a metered or donation-funded
+# tile service is worst placed to absorb it, and there is no key to leak in a
+# public page.
 DASHBOARD_MAP_STYLE = os.getenv(
-    "DASHBOARD_MAP_STYLE", "https://tiles.openfreemap.org/styles/liberty"
+    "DASHBOARD_MAP_STYLE",
+    "https://vectortiles.nyc3.cdn.digitaloceanspaces.com/protostyle3.json",
 )
+# Which glyphs the style's font source actually carries. Ours has Regular,
+# Medium and Italic; OpenFreeMap has Regular, Bold and Italic, so switching the
+# style above means switching these too. Single font names only: MapLibre joins a
+# multi-font stack with commas into one glyph URL, and a static bucket has no
+# directory by that name.
+DASHBOARD_MAP_FONTS = {
+    "regular": os.getenv("DASHBOARD_MAP_FONT_REGULAR", "Noto Sans Regular"),
+    "emphasis": os.getenv("DASHBOARD_MAP_FONT_EMPHASIS", "Noto Sans Medium"),
+}
 
 # Scraper behaviour.
 SCRAPER_DELAY_SECONDS = float(os.getenv("SCRAPER_DELAY_SECONDS", "1.5"))

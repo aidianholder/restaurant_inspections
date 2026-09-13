@@ -145,7 +145,15 @@ class Facility(models.Model):
         super().save(*args, **kwargs)
 
     def get_absolute_url(self):
-        return reverse("facility-detail", args=[self.slug])
+        """The reader-facing page — this record's canonical public address.
+
+        Deliberately not the staff view at `facility-detail`, which carries
+        coordinates, the geocoder used, and inspections whose details have not
+        been retrieved. Staff templates link to that one explicitly; everything
+        else, including the admin's "View on site", should land where a reader
+        would.
+        """
+        return reverse("establishment", args=[self.slug])
 
     @property
     def latitude(self):
