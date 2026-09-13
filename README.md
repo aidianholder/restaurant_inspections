@@ -239,6 +239,72 @@ the form. If more than one person has access and that isn't comfortable, the
 stricter arrangement is a fixed provenance preamble in code concatenated with the
 editable rules from the row.
 
+## Dashboards
+
+A `Dashboard` is one newspaper's public map-and-table view over its readership
+area — several counties, a MapLibre map above a searchable, sortable, paginated
+table, the two kept in sync. Distinct from `Embed`, which is a single cached
+table for one county.
+
+Configure it in the admin (counties, rows per page, title) and hand the newsroom
+the snippet. Two ways to mount it, both from the same bundle and the same API:
+
+```html
+<!-- preferred: mounts into the paper's own page -->
+<div data-arhi-dashboard></div>
+<script src="https://…/dashboard/<slug>/embed.js" async></script>
+
+<!-- fallback for a site we don't control -->
+<iframe src="https://…/dashboard/<slug>/" style="width:100%;border:0;height:1200px"></iframe>
+```
+
+The component is the default because WEHCO controls the papers' CSS and CSP,
+which removes both arguments for an iframe — and mounting directly means deep
+links and the back button work, and a pan-zoom map does not fight a phone's
+scroll. `design_note.md` has the full reasoning.
+
+### Why it is an API and not a rendered table
+
+Server-side paging is *what an API does*; it was never an argument for
+server-rendering. Three read-only `JsonResponse` endpoints:
+
+| Endpoint | Returns |
+|---|---|
+| `api/rows` | One page of the table, with each row's violations for the dropdown |
+| `api/map` | Every facility matching the filters, as GeoJSON |
+| `api/facility/<id>` | One row, for a pin click whose row is on another page |
+
+**The map reflects the filter state, never the sort or the page.** Sorting
+reorders rows without changing which facilities match, so a column click costs
+one request and the map is untouched; paging shows a different slice of the same
+matches, and a map showing only page one would be useless. That is what makes
+rapid sorting free rather than expensive.
+
+Measured on 1,919 facilities across seven counties, the map payload is 446KB raw
+and **85KB gzipped** — `map` and `rows` are gzipped by decorator rather than by
+global middleware, because compressing every response, including admin pages with
+a CSRF token beside reflected search terms, is the setup BREACH needs.
+
+### Front end
+
+No build step. Plain ES modules in `inspections/static/inspections/dashboard/`,
+with MapLibre vendored beside them.
+
+- Every class is prefixed `arhi-` and **no ids are used anywhere** — WEHCO's
+  weather features already own `#map`, and the surest way not to collide is to
+  have nothing to collide with.
+- MapLibre is imported as an ES module, so no `window.maplibregl` is ever
+  created for two features to fight over. Vendoring it means **three** files:
+  `maplibre-gl.mjs`, `maplibre-gl-shared.mjs`, and `maplibre-gl-worker.mjs`. The
+  worker is resolved relative to `import.meta.url`; without it the map silently
+  never finishes loading, with no console error.
+- Sized by container query, not viewport: the component's width comes from
+  whatever column it is dropped into. Map height 360/460/560px; table columns
+  drop rather than truncate, since the dropdown carries everything anyway.
+- `DASHBOARD_MAP_STYLE` picks the basemap, defaulting to OpenFreeMap. Pointing it
+  at the self-hosted `protostyle3.json` also needs the pmtiles library vendored,
+  since that style's source is a `pmtiles://` URL.
+
 ## Scheduled scrapes
 
 Each county can carry a standing instruction to re-scrape itself — cadence, the day
@@ -479,6 +545,53 @@ automatically: a person unticks it when the address is right.
 The Arkansas locator also exposes a batch endpoint (`geocodeAddresses`, up to
 1,000 per call), worth adopting if backfills ever run to thousands of rows.
 
+## Latest-inspection columns
+
+`Facility` carries a denormalised summary of its own newest inspection:
+`latest_inspection`, `latest_inspection_date`, `latest_inspection_type`,
+`latest_violation_total`, `latest_priority`, `latest_priority_foundation`,
+`latest_core`, and `inspection_count`.
+
+**The violation counts describe the latest inspection alone, never the facility's
+history.** MI PUEBLITO has 25 inspections on record and 32 violations across all
+of them, but it was clean on 24 August 2026, so `latest_violation_total` is 0.
+Storing the lifetime figure would brand a currently-clean restaurant with 32
+violations. `inspection_count` is the one field here that covers everything — and
+it counts inspections, not violations.
+
+### Why they exist
+
+Not speed, mostly. A correlated subquery over 10,000 facilities runs in about
+26ms, which is fine. What the columns buy is reach: violation counts used to be
+attached *after* paging, so you could not order by them, and the dashboard needs
+that column sortable. Working around it means a subquery whose `OuterRef` points
+at another annotation — the fragile shape the old
+`views._attach_latest_violation_counts` existed to avoid. Measured at 10,000
+facilities, sorting by violation count went from 35.5ms to 0.7ms, which also
+buys headroom for a public page when a story spikes traffic.
+
+### How they stay true
+
+Recomputed, never incrementally maintained. Four places change the answer — a new
+inspection, the website overlay writing violations, a report PDF replacing them,
+someone editing violations in the admin — and hooking each one is how derived
+columns go quietly wrong.
+
+- Every scrape run refreshes the facilities it touched, in a `finally` so a run
+  that dies partway still leaves them correct.
+- `InspectionAdmin` refreshes on inline edits and deletions, the one path a
+  person can reach without a run.
+- Everything else is `manage.py rebuild_latest_inspection`.
+
+```bash
+.venv/bin/python manage.py rebuild_latest_inspection --check     # audit, writes nothing
+.venv/bin/python manage.py rebuild_latest_inspection             # rebuild all
+.venv/bin/python manage.py rebuild_latest_inspection --county Pulaski
+```
+
+The refresh only writes rows whose values actually differ, so `--check` can run
+it inside a rolled-back transaction and report honestly how many are stale.
+
 ## What each run stores
 
 Every inspection the site lists is stored, because the history comes for free.
@@ -552,10 +665,13 @@ markup or report layout rather than silently importing empty rows.
 | `inspections/ingest.py` | Drives the scraper, writes to the database |
 | `inspections/scheduling.py` | Works out when each county is next due, and dispatches |
 | `inspections/embed_views.py` | Public embed page and loader script |
+| `inspections/dashboard_views.py` | Per-newspaper dashboard: JSON API, page, and mount script |
 | `inspections/output.py` | Stored inspections → Markdown for a story |
 | `inspections/markdown_render.py` | Markdown → HTML, for the web copy and the editor's preview |
 | `inspections/summarize.py` | Batches an export to OpenAI to be shortened, and reconciles what comes back |
-| `inspections/geocoding.py` | Arkansas-GIS-then-Census location lookup |
+| `inspections/geocoding.py` | Arkansas-GIS-then-NG911-then-Census location lookup |
+| `inspections/latest_inspection.py` | Rebuilds Facility's denormalised latest-inspection columns |
+| `inspections/widgets.py` | The admin's map widget, on OpenFreeMap vector tiles |
 | `inspections/models.py` | Facility → Inspection → Violation, plus ScrapeRun |
 | `inspections/places.py` | Arkansas place names (2023 Census Gazetteer) for address splitting |
 | `inspections/violation_items.py` | The 57 numbered form items, extracted from the reports |

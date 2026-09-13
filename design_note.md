@@ -1,5 +1,8 @@
 # Design note: the per-newspaper inspections dashboard
 
+> **Built 2026-09-13.** What follows is the reasoning that shaped it; where
+> the build taught us something the note did not anticipate, it says so.
+
 Written 2026-09-12, before any code; revised as decisions were made. A
 per-publication public view over a readership area — 8–9 counties at the largest,
 under 10,000 facilities — with a MapLibre map above a searchable, sortable,
@@ -317,16 +320,29 @@ to be in the GeoJSON — which the payload numbers above already account for.
 
 ## What will actually bite
 
-**"Latest inspection per facility" is the expensive query, not the map.**
-`facility_list` does this with correlated subqueries and then caps the result at
-200, which hides the cost. Sorting 5,000 facilities by latest inspection date,
-with violation counts, on every page request, is where this gets slow.
+**The latest-inspection columns — done, and for a different reason than first
+argued.** An earlier draft of this note called the correlated-subquery pattern
+"the expensive query". Measured at 10,000 facilities it is not: a page sorted by
+date takes 26ms, which is fine.
 
-Denormalise onto `Facility`: `latest_inspection_date`, `latest_inspection_type`,
-and the P/PF/C counts, written by the ingest pipeline, which is already doing
-writes at that moment. The table query becomes an indexed filter and sort on one
-table, and the map payload becomes a single scan. It also makes the whole thing
-cacheable per scrape.
+What it could not do is sort by violation count. Those counts were attached
+*after* paging, and you cannot order by a value you compute after you have
+paged. Reaching it from the old shape needs a subquery whose `OuterRef` points at
+another annotation, which is the fragile construct
+`views._attach_latest_violation_counts` existed to avoid.
+
+So `Facility` now carries `latest_inspection`, `latest_inspection_date`,
+`latest_inspection_type`, `latest_violation_total`, the P/PF/C breakdown, and
+`inspection_count`. Sorting by violation count went from 35.5ms to 0.7ms, which
+also buys headroom for a public page when a story spikes traffic.
+
+**The counts describe the latest inspection alone, never the history.** One real
+example: 25 inspections, 32 violations lifetime, clean at the most recent visit,
+so the stored total is 0. The lifetime figure would libel a clean restaurant.
+
+They are recomputed rather than incrementally maintained — scrape runs refresh
+what they touched, `InspectionAdmin` refreshes on hand edits, and
+`manage.py rebuild_latest_inspection` covers everything else.
 
 For "search across all fields", `icontains` will creak. `pg_trgm` with a GIN
 index is a small addition to a database already running PostGIS.
@@ -344,34 +360,46 @@ facility in a server-paginated table. Jumping the reader to page 7 is
 disorienting. Better to fetch just that facility and pin it in a "selected" strip
 above the results, leaving pagination and filters untouched.
 
+## What the build actually taught us
+
+Three things the reasoning above did not anticipate:
+
+**Vendoring MapLibre means three files, not one.** `maplibre-gl.mjs` imports
+`maplibre-gl-shared.mjs`, and separately resolves `maplibre-gl-worker.mjs`
+relative to `import.meta.url`. Miss the worker and the map never finishes
+loading — no console error, no failed layer, just a style that stays unloaded
+forever. That cost more debugging than anything else in the build.
+
+**MapLibre's ESM build has no default export.** `import maplibregl from …` fails
+with a clear error; named imports are required. Which is arguably better — it
+makes what the component uses explicit.
+
+**There is no public getter for a GeoJSON source's data.** Reaching into
+`source._data` to find a feature by id works right up until MapLibre renames a
+private field. The component keeps its own reference to what it last set
+instead.
+
 ## Open questions
 
 Three, in the order they block work.
 
-**1. Is there a JavaScript build step?** The repository has no `package.json` and
-no node tooling, and its stated instincts run dependency-light. Two options:
+All three are settled.
 
-- *No build.* Plain ES modules served as static files, MapLibre vendored as a
-  static `.js` and imported. Nothing new to install, everything inspectable, and
-  HTTP/2 makes a handful of module files cheap.
-- *A build.* esbuild or vite producing one bundle. Fewer requests, but npm and a
-  build stage arrive in a Python repo and have to be run on deploy.
+**Build step:** none. Plain ES modules served as static files, MapLibre vendored
+beside them.
 
-Either works. The first fits the house style better; the second is conventional.
-This is the one real fork and it should be settled before any front-end code.
+**Denormalisation:** done — see above.
 
-**2. Is the "latest inspection" denormalisation in scope?** Recommended — see
-above — but at under 10,000 facilities it is an optimisation rather than a
-necessity. It is a schema change, a backfill and an ingest-pipeline change, and it
-is much cheaper now than retrofitted later.
+**Real data:** 1,919 facilities across seven counties, which the whole build was
+verified against.
 
-**3. Real data to build against.** The development database is empty and the work
-so far has run on synthetic rows. A production dump, or even per-county facility
-counts plus a few hundred real rows, would make the clustering, label collision
-and column-width decisions concrete rather than guessed.
+Defaults taken, all still open to correction: map pins are **a single neutral
+colour**, because grading them by violation count would be an editorial claim
+about a named business rather than a design choice; the date filter targets the
+latest inspection date; and the sortable columns are name, city, date and
+violation count.
 
-Smaller calls that can be made with defaults and corrected later: the exact column
-set and which columns sort; whether map pins are a single neutral colour or
-graduated by violation count (an editorial question more than a design one —
-colouring an establishment red is a claim); and whether the date filter targets
-the latest inspection date, which is assumed here.
+Still worth a decision before this goes in front of readers: whether the API
+should be rate-limited or cached at the edge. It is public and unauthenticated by
+design, like the rest of the reader-facing site, and `api/map` is the expensive
+one.

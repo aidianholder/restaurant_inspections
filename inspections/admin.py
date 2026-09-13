@@ -5,8 +5,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from .latest_inspection import refresh as refresh_latest
 from .models import (
-    Embed, Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule,
+    Dashboard, Embed, Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule,
     SummaryPrompt, Violation, ViolationItem,
 )
 from .widgets import VectorBasemapWidget
@@ -93,6 +94,24 @@ class InspectionAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description="report")
     def has_report(self, obj):
         return bool(obj.report_pdf)
+
+    # Facility's latest_* columns are rebuilt by scrape runs. Editing violations
+    # inline, or deleting an inspection, changes the answer without a run — the
+    # one realistic way those columns go stale in production. Rebuilding one
+    # facility is a single indexed statement, so it is cheap to do here.
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        refresh_latest([form.instance.facility_id])
+
+    def delete_model(self, request, obj):
+        facility_id = obj.facility_id
+        super().delete_model(request, obj)
+        refresh_latest([facility_id])
+
+    def delete_queryset(self, request, queryset):
+        facility_ids = list(queryset.values_list("facility_id", flat=True))
+        super().delete_queryset(request, queryset)
+        refresh_latest(facility_ids)
 
 
 @admin.register(ScrapeRun)
@@ -345,3 +364,93 @@ class SummaryPromptAdmin(admin.ModelAdmin):
         if obj is not None and obj.is_active:
             return False
         return super().has_delete_permission(request, obj)
+
+
+@admin.register(Dashboard)
+class DashboardAdmin(admin.ModelAdmin):
+    """One newspaper's map-and-table view over its readership area.
+
+    A paper names its counties; you fill this in and send them the snippet. No
+    file, no template, no deploy — the API reads this row at request time.
+    """
+
+    list_display = ("slug", "publication", "county_list", "rows_per_page", "is_active")
+    list_filter = ("is_active", "publication")
+    search_fields = ("slug", "publication", "notes")
+    readonly_fields = ("embed_snippet", "created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("slug", "publication", "is_active")}),
+        ("What it covers", {
+            "fields": ("counties",),
+            "description": "Every county in this paper's readership area. The map and "
+                           "table both stay inside this list — a reader cannot filter "
+                           "their way out of it.",
+        }),
+        ("Presentation", {"fields": ("title_override", "rows_per_page")}),
+        ("Give this to the newsroom", {"fields": ("embed_snippet",)}),
+        ("Internal", {"fields": ("notes", "created_at", "updated_at")}),
+    )
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if db_field.name == "counties":
+            # A checkbox grid beats typing a comma-separated list of 75 counties.
+            from django import forms
+
+            from .counties import COUNTY_CHOICES
+
+            return forms.MultipleChoiceField(
+                choices=[(c, c) for c, _ in COUNTY_CHOICES if c != "UNKNOWN"],
+                widget=forms.CheckboxSelectMultiple,
+                label="Counties",
+                help_text=db_field.help_text,
+            )
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
+    @admin.display(description="Counties")
+    def county_list(self, obj):
+        counties = obj.counties or []
+        if len(counties) <= 4:
+            return ", ".join(counties)
+        return f"{', '.join(counties[:4])} +{len(counties) - 4} more"
+
+    @admin.display(description="Embed code")
+    def embed_snippet(self, obj):
+        if not obj.pk:
+            return "Save the dashboard first, then the snippet appears here."
+
+        request = getattr(self, "_request", None)
+        page_url = obj.get_absolute_url()
+        loader_url = reverse("dashboard-loader", args=[obj.slug])
+        if request is not None:
+            page_url = request.build_absolute_uri(page_url)
+            loader_url = request.build_absolute_uri(loader_url)
+
+        snippet = (
+            f'<div data-arhi-dashboard></div>\n'
+            f'<script src="{loader_url}" async></script>'
+        )
+        iframe = (
+            f'<iframe src="{page_url}" title="{obj.heading}" '
+            f'style="width:100%;border:0;height:1200px"></iframe>'
+        )
+        box = ("width:100%;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;"
+               "padding:8px;border:1px solid #b8b3ac;border-radius:4px;"
+               # Both colours pinned: inheriting either leaves the snippet
+               # unreadable under the admin's dark theme.
+               "background:#fbfaf8;color:#1a1a1a")
+        return format_html(
+            '<p style="margin:0 0 4px"><strong>Component</strong> — preferred. Mounts into '
+            'the page, so deep links and the back button work and the map does not fight '
+            'a phone\'s scroll.</p>'
+            '<textarea readonly rows="3" style="{}" onclick="this.select()">{}</textarea>'
+            '<p style="margin:12px 0 4px"><strong>Iframe</strong> — fallback for a site we '
+            'do not control. Fixed height.</p>'
+            '<textarea readonly rows="3" style="{}" onclick="this.select()">{}</textarea>'
+            '<p style="margin:12px 0 0"><a href="{}" target="_blank" rel="noopener">'
+            'Open this dashboard \u2192</a></p>',
+            box, snippet, box, iframe, page_url,
+        )
+
+    def get_form(self, request, obj=None, **kwargs):
+        self._request = request        # so the snippet can carry an absolute URL
+        return super().get_form(request, obj, **kwargs)

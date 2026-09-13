@@ -1,9 +1,7 @@
 import logging
-from collections import defaultdict
 
 from django.conf import settings
-from django.db.models import Count, IntegerField, OuterRef, Prefetch, Q, Subquery
-from django.db.models.functions import Coalesce
+from django.db.models import Prefetch, Q
 from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django_q.tasks import async_task
@@ -66,51 +64,13 @@ def scrape_status(request, pk):
     )
 
 
-def _latest_inspection_for_facility():
-    """Subquery source: a facility's inspections, newest first.
-
-    Ordered by sequence and pk as well as date so two inspections on the same day
-    resolve deterministically rather than arbitrarily.
-    """
-    return Inspection.objects.filter(facility=OuterRef("pk")).order_by(
-        "-date", "-sequence_within_day", "-pk"
-    )
-
-
-def _attach_latest_violation_counts(facilities):
-    """Fill in P / PF / C counts for each facility's most recent inspection.
-
-    Done as one grouped query over the page's inspections rather than as more
-    subqueries: it stays a single round trip, and it's far easier to read than
-    nesting OuterRefs three deep.
-    """
-    latest_ids = [f.latest_inspection_id for f in facilities if f.latest_inspection_id]
-    counts = defaultdict(lambda: {"P": 0, "PF": 0, "C": 0, "total": 0})
-
-    if latest_ids:
-        rows = (
-            Violation.objects.filter(inspection_id__in=latest_ids)
-            .values("inspection_id", "priority_level")
-            .annotate(n=Count("pk"))
-        )
-        for row in rows:
-            bucket = counts[row["inspection_id"]]
-            bucket["total"] += row["n"]
-            # A violation with no priority level still counts toward the total.
-            if row["priority_level"] in bucket:
-                bucket[row["priority_level"]] = row["n"]
-
-    for facility in facilities:
-        bucket = counts[facility.latest_inspection_id]
-        facility.latest_priority = bucket["P"]
-        facility.latest_priority_foundation = bucket["PF"]
-        facility.latest_core = bucket["C"]
-        facility.latest_violation_total = bucket["total"]
-    return facilities
-
-
 def facility_list(request):
-    """Reader-facing index of everything retrieved so far."""
+    """Reader-facing index of everything retrieved so far.
+
+    Reads the denormalised `latest_*` columns on Facility rather than computing
+    them per row. They are rebuilt at the end of every scrape run — see
+    `inspections/latest_inspection.py`.
+    """
     counties = (
         Facility.objects.exclude(county="")
         .values_list("county", flat=True)
@@ -119,24 +79,7 @@ def facility_list(request):
     )
     form = FacilityFilterForm(request.GET or None, counties=counties)
 
-    latest = _latest_inspection_for_facility()
-    facilities = Facility.objects.annotate(
-        # All subqueries, no aggregates: mixing the two in one queryset drags a
-        # GROUP BY across the subqueries and gets fragile.
-        inspection_count=Coalesce(
-            Subquery(
-                Inspection.objects.filter(facility=OuterRef("pk"))
-                .values("facility")
-                .annotate(n=Count("pk"))
-                .values("n")[:1],
-                output_field=IntegerField(),
-            ),
-            0,
-        ),
-        latest_inspection=Subquery(latest.values("date")[:1]),
-        latest_inspection_id=Subquery(latest.values("pk")[:1]),
-        latest_inspection_type=Subquery(latest.values("inspection_type")[:1]),
-    ).filter(inspection_count__gt=0)
+    facilities = Facility.objects.filter(inspection_count__gt=0)
 
     if form.is_bound:
         # Run validation for its side effect of populating cleaned_data, then
@@ -152,18 +95,17 @@ def facility_list(request):
             )
         # Both bounds are optional and apply to the latest inspection date.
         if cleaned.get("date_from"):
-            facilities = facilities.filter(latest_inspection__gte=cleaned["date_from"])
+            facilities = facilities.filter(latest_inspection_date__gte=cleaned["date_from"])
         if cleaned.get("date_to"):
-            facilities = facilities.filter(latest_inspection__lte=cleaned["date_to"])
+            facilities = facilities.filter(latest_inspection_date__lte=cleaned["date_to"])
 
-    facilities = facilities.order_by("-latest_inspection", "name")
+    facilities = facilities.order_by("-latest_inspection_date", "name")
     total = facilities.count()
-    page = _attach_latest_violation_counts(list(facilities[:200]))
 
     return render(
         request,
         "inspections/facility_list.html",
-        {"form": form, "facilities": page, "total": total},
+        {"form": form, "facilities": list(facilities[:200]), "total": total},
     )
 
 

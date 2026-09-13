@@ -19,6 +19,9 @@ ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0
 
 INSTALLED_APPS = [
     "django.contrib.gis",
+    # For ArrayField on Dashboard.counties — a readership area is a list of
+    # counties, and Postgres stores it as one rather than needing a join table.
+    "django.contrib.postgres",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -197,6 +200,15 @@ OPENAI_BATCH_SIZE = int(os.getenv("OPENAI_BATCH_SIZE", "10"))
 # Batches in flight at once. Low on purpose: the gain over serial is most of the
 # way there by four, and beyond that a wide range starts tripping rate limits.
 OPENAI_MAX_PARALLEL = int(os.getenv("OPENAI_MAX_PARALLEL", "4"))
+
+# Basemap for the public dashboard. OpenFreeMap by default: no key, no usage
+# limits, and a self-contained style whose glyphs and sprites come from the same
+# host. Point it at the self-hosted protostyle3.json once the Noto fonts are in
+# the bucket — that needs the pmtiles library vendored alongside MapLibre, since
+# the style's source is a pmtiles:// URL.
+DASHBOARD_MAP_STYLE = os.getenv(
+    "DASHBOARD_MAP_STYLE", "https://tiles.openfreemap.org/styles/liberty"
+)
 
 # Scraper behaviour.
 SCRAPER_DELAY_SECONDS = float(os.getenv("SCRAPER_DELAY_SECONDS", "1.5"))

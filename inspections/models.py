@@ -11,6 +11,7 @@ import hashlib
 import re
 
 from django.contrib.gis.db import models
+from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -83,6 +84,37 @@ class Facility(models.Model):
     geocode_attempts = models.PositiveSmallIntegerField(default=0)
     geocode_last_attempt = models.DateTimeField(null=True, blank=True)
 
+    # ---- Denormalised from this facility's inspections ----
+    #
+    # Derived data, never edited by hand. Rebuilt by `latest_inspection.refresh()`
+    # at the end of every scrape run, and by `manage.py rebuild_latest_inspection`.
+    #
+    # These exist so the dashboard can filter, sort and page on one indexed table
+    # instead of running a correlated subquery per row. Sorting by violation count
+    # is the case that actually needs them: the old code counted violations only
+    # after paging, which means you cannot order by the result.
+    #
+    # **The violation counts describe the LATEST inspection alone, not the
+    # facility's history.** A restaurant cited nine times in 2019 and clean at its
+    # most recent visit has `latest_violation_total = 0`. `inspection_count` is the
+    # one field here that covers everything on record — it counts inspections, not
+    # violations.
+    latest_inspection = models.ForeignKey(
+        "Inspection", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+        help_text="The most recent inspection. Derived; do not edit.",
+    )
+    latest_inspection_date = models.DateField(null=True, blank=True, db_index=True)
+    latest_inspection_type = models.CharField(max_length=120, blank=True)
+    latest_violation_total = models.PositiveSmallIntegerField(
+        default=0, help_text="Violations at the most recent inspection only.",
+    )
+    latest_priority = models.PositiveSmallIntegerField(default=0)
+    latest_priority_foundation = models.PositiveSmallIntegerField(default=0)
+    latest_core = models.PositiveSmallIntegerField(default=0)
+    inspection_count = models.PositiveIntegerField(
+        default=0, help_text="Total inspections on record — the whole history, unlike the counts above.",
+    )
+
     slug = models.SlugField(max_length=280, unique=True)
     first_seen = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(auto_now=True)
@@ -90,7 +122,14 @@ class Facility(models.Model):
     class Meta:
         verbose_name_plural = "facilities"
         ordering = ["name"]
-        indexes = [models.Index(fields=["county", "name"])]
+        indexes = [
+            models.Index(fields=["county", "name"]),
+            # The dashboard's sorts, each scoped by county because a publication
+            # only ever looks at its own.
+            models.Index(fields=["county", "-latest_inspection_date"]),
+            models.Index(fields=["county", "-latest_violation_total"]),
+            models.Index(fields=["-latest_inspection_date"]),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.city})"
@@ -492,6 +531,88 @@ class SummaryPrompt(models.Model):
     def active(cls):
         """The live prompt, or None to fall back to the wording shipped in code."""
         return cls.objects.filter(is_active=True).first()
+
+
+class Dashboard(models.Model):
+    """One newspaper's public map-and-table view over its readership area.
+
+    Distinct from `Embed`, which is a single cached table for one county. This
+    covers several counties, pages and sorts in the database, and is driven by a
+    JSON API rather than being rendered once and cached — a readership area runs
+    to thousands of facilities, well past the ~1000 rows `Embed.row_limit`
+    documents as the ceiling for doing it all in the browser.
+    """
+
+    slug = models.SlugField(max_length=80, unique=True, help_text="Appears in the URL.")
+    publication = models.CharField(
+        max_length=120, blank=True, help_text="Which paper this is for. Internal only."
+    )
+    counties = ArrayField(
+        models.CharField(max_length=64, choices=COUNTY_CHOICES),
+        help_text="Every county in this paper's readership area.",
+    )
+
+    title_override = models.CharField(
+        max_length=200, blank=True,
+        help_text="Replaces the automatic 'Health inspections' heading.",
+    )
+    rows_per_page = models.PositiveSmallIntegerField(
+        default=25,
+        help_text="Rows per page in the table. The map always shows every match, "
+                  "whatever page the reader is on.",
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Switching this off blanks the dashboard everywhere it appears, "
+                  "without anyone editing their CMS.",
+    )
+    notes = models.TextField(blank=True, help_text="Internal only.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["slug"]
+
+    def __str__(self):
+        return f"{self.slug} ({len(self.counties or [])} counties)"
+
+    def clean(self):
+        if not self.counties:
+            raise ValidationError({"counties": "Choose at least one county."})
+        unknown = [c for c in self.counties if c not in dict(COUNTY_CHOICES)]
+        if unknown:
+            raise ValidationError({"counties": f"Not Arkansas counties: {', '.join(unknown)}"})
+
+    def save(self, *args, **kwargs):
+        # Deduplicated and sorted on the way in. A duplicate does no harm to the
+        # `county__in` query but makes the filter dropdown repeat itself, and the
+        # list is small enough that normalising it here is free.
+        if self.counties:
+            self.counties = sorted(set(self.counties))
+        super().save(*args, **kwargs)
+
+    def get_absolute_url(self):
+        return reverse("dashboard-page", args=[self.slug])
+
+    @property
+    def heading(self):
+        if self.title_override:
+            return self.title_override
+        counties = self.counties or []
+        if len(counties) == 1:
+            return f"{counties[0]} County health inspections"
+        return "Health inspections"
+
+    def facilities(self):
+        """Every facility this dashboard covers that has ever been inspected.
+
+        `latest_inspection_date` is the denormalised column, so filtering and
+        sorting stay on one indexed table.
+        """
+        return Facility.objects.filter(
+            county__in=self.counties or [], latest_inspection_date__isnull=False
+        )
 
 
 class ScrapeSchedule(models.Model):

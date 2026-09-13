@@ -3,7 +3,10 @@ import datetime as dt
 from django.test import TestCase
 from django.urls import reverse
 
-from inspections.models import Facility, Inspection, ScrapeRun, Violation, fingerprint
+from inspections.latest_inspection import refresh
+from inspections.models import (
+    Facility, Inspection, ScrapeRun, Violation, fingerprint,
+)
 
 
 class ViewTests(TestCase):
@@ -33,6 +36,7 @@ class ViewTests(TestCase):
             code_explanation="Cold Holding",
             inspector_comments="Milk held above 41 degrees.",
         )
+        refresh()
 
     def test_facility_list_shows_retrieved_data(self):
         r = self.client.get(reverse("facility-list"))
@@ -123,6 +127,10 @@ class BrowseDateFilterTests(TestCase):
         cls.mid = facility("MID DINER", dt.date(2026, 3, 15))
         cls.recent = facility("RECENT DINER", dt.date(2026, 8, 10))
 
+        # The browse view reads Facility's denormalised columns, which a scrape
+        # run would have rebuilt. Building rows directly skips that.
+        refresh()
+
     def names(self, response):
         body = response.content.decode()
         return {n for n in ("OLD DINER", "MID DINER", "RECENT DINER") if n in body}
@@ -207,8 +215,13 @@ class BrowseLatestInspectionTests(TestCase):
             Violation.objects.create(
                 inspection=cls.latest, ordinal=i, priority_level=level, code=f"new-{i}"
             )
+        refresh()
 
     def row(self):
+        # Stands in for the scrape run that would normally rebuild Facility's
+        # denormalised columns. Tests in this class mutate inspections and
+        # violations directly, so the rebuild has to happen before the read.
+        refresh()
         response = self.client.get(reverse("facility-list"))
         return response, response.context["facilities"][0]
 
@@ -237,6 +250,7 @@ class BrowseLatestInspectionTests(TestCase):
         Inspection.objects.create(
             facility=clean, date=dt.date(2026, 7, 1), inspection_type="Routine"
         )
+        refresh()
         response = self.client.get(reverse("facility-list"))
         row = next(f for f in response.context["facilities"] if f.name == "SPOTLESS")
         self.assertEqual(row.latest_violation_total, 0)
