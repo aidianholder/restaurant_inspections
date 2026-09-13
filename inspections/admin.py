@@ -9,6 +9,7 @@ from .models import (
     Embed, Facility, GeocodeSource, Inspection, ScrapeRun, ScrapeSchedule,
     SummaryPrompt, Violation, ViolationItem,
 )
+from .widgets import VectorBasemapWidget
 
 admin.site.site_header = "AR Health Inspections"
 admin.site.site_title = "AR Health Inspections"
@@ -28,6 +29,10 @@ class InspectionInline(admin.TabularInline):
 
 @admin.register(Facility)
 class FacilityAdmin(admin.GISModelAdmin):
+    # Django's default is OpenStreetMap's public tile server, which blocks
+    # sustained use. See inspections/widgets.py.
+    gis_widget = VectorBasemapWidget
+
     list_display = (
         "name", "city", "county", "phone", "source_key",
         "address_needs_review", "geocode_source", "coordinates",

@@ -384,7 +384,22 @@ It returns real address points rather than interpolated street ranges, is alread
 WGS84, and resolves Arkansas addresses the Census data has never heard of. On a
 sample of 169 facilities it located 153; Census managed 3 more.
 
-**Fallback: the Census Bureau geocoder** — free, public, no API key.
+**Supplement: the [NG911/USPS address lookup](https://gis.arkansas.gov/arcgis/rest/services/Locator/NG911_USPS_Address_Lookup/GeocodeServer)**,
+built on the address points counties maintain for emergency dispatch. Same Esri
+API, same fields, same WGS84, so it costs almost nothing to call.
+
+It is a supplement and not a replacement, which is worth being precise about
+because it looks like an upgrade. Measured against the composite locator on 25
+real failures it rescued exactly one — a duplicated address string
+(`8350 WARDEN ROAD 8350 WARDEN ROAD 8350 WARD`) that its parser recovered from
+and the composite's did not. On clean addresses the two agree exactly, type and
+score. On messy ones NG911 more often returns nothing at all where the composite
+at least returns a `Locality`. And it is readier to invent a confident match: it
+turned `ROUTE 2, BOX 8` into a street called "PO BOX" at score 82. Hence a
+minimum score of 90 rather than 80, plus an explicit refusal of any match to a
+PO box — a mail destination is not a place.
+
+**Last resort: the Census Bureau geocoder** — free, public, no API key.
 
 Matches are accepted only at address precision. The Arkansas locator answers
 nearly *every* query, so the `Addr_type` filter is what makes it safe: a
@@ -393,6 +408,26 @@ whole street, and accepting either would scatter pins across town centres.
 Accepted types and the minimum `Score` are in settings. Whatever matched — type
 and score included — is stored in `geocode_matched_address`, so a questionable
 match is visible rather than silent.
+
+### The admin's basemap
+
+Django's GIS widget defaults to OpenStreetMap's public tile server, which blocks
+sustained use — as its tile usage policy says it will. `inspections/widgets.py`
+swaps the basemap for [OpenFreeMap](https://openfreemap.org/) vector tiles: no
+API key, no usage limits, and a self-contained style whose glyphs and sprites
+resolve from the same host, so there is nothing extra to host or keep alive.
+
+Only the basemap changes. Placing, dragging and clearing the point, and the
+GeoJSON serialisation behind it, are still Django's — `MapWidget.layerBuilder` is
+the documented extension point for exactly this, so none of that had to be
+reimplemented to change a tile source. The OpenLayers version is unpacked from
+Django's own widget media rather than pinned, so it tracks whatever Django ships.
+
+Two details worth knowing if it ever looks wrong. The style's `background` layer
+belongs to no source, so applying the style per-source skips it — the land colour
+comes from CSS on `.dj_map` instead, and must match the style if you change it.
+And `ol-mapbox-style` is pinned at 12.2.1, the last release whose peer range still
+covers the OpenLayers 7.2.2 that Django bundles.
 
 ### Why the state's own map coordinates aren't used
 
@@ -410,12 +445,30 @@ re-run with `--force`.
 
 ### Addresses that can't be geocoded
 
-Some facilities are unlocatable because the state's own address is wrong or
-stale, not because the geocoders failed — a dozen Simmons Bank Arena concession
-stands are still filed under `ONE VERIZON ARENA WAY`. Those are counted in
-`geocode_attempts` and abandoned after `MAX_GEOCODE_ATTEMPTS` so later scrapes
-don't re-query them forever; fix them by dropping a pin on the map widget in the
-admin, which records the point as `manual`.
+**Almost every remaining failure is a bad address, not a geocoder that needs
+replacing.** On a real sample of 25, three clusters accounted for 20 of them:
+
+- **12 — `ONE VERIZON ARENA WAY`.** The arena was renamed; `1 Simmons Bank Arena
+  Way` resolves at PointAddress 98 in *both* locators. Eleven of those twelve are
+  concession stands in that one building. No geocoder resolves a street name that
+  no longer exists.
+- **6 — `N BUSINESS 9`, Morrilton.** Both locators reach `StreetName` and stop.
+  `1621 N Highway 9 B` gives StreetAddress 98, but the match comes back as
+  `1621 HIGHWAY 9` with the B dropped, which may be a different road — worth
+  checking against a map before rewriting six addresses on the strength of it.
+- **2 — repeated or concatenated strings.** `raw_address` shows these arrived
+  from ADH that way, truncated around 43 characters at the source. Not our
+  parser.
+
+The rest are genuinely unaddressable: a rural-route box, a road intersection with
+no house number, a mangled cove name.
+
+Retrying never fixes any of this, so when `geocode_attempts` reaches
+`MAX_GEOCODE_ATTEMPTS` the facility is flagged `address_needs_review` and
+abandoned. `FacilityAdmin` sorts flagged rows to the top, which puts them in front
+of someone who can correct the address once — fix by dropping a pin on the map
+widget, which records the point as `manual`. Nothing ever clears the flag
+automatically: a person unticks it when the address is right.
 
 ```bash
 .venv/bin/python manage.py geocode_facilities            # only the unlocated

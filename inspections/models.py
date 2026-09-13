@@ -33,6 +33,7 @@ class PriorityLevel(models.TextChoices):
 
 class GeocodeSource(models.TextChoices):
     ARKANSAS_GIS = "arkansas_gis", "Arkansas GIS composite locator"
+    ARKANSAS_NG911 = "arkansas_ng911", "Arkansas GIS NG911 address lookup"
     CENSUS = "census", "Census geocoder"
     MANUAL = "manual", "Entered by hand"
     # Retained so historical rows stay readable. No longer produced: the ADH map

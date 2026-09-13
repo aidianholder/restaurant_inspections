@@ -153,6 +153,19 @@ ARKANSAS_GIS_ACCEPTED_TYPES = {
     "StreetAddressExt", "POI",
 }
 ARKANSAS_GIS_MIN_SCORE = float(os.getenv("ARKANSAS_GIS_MIN_SCORE", "80"))
+
+# NG911/USPS address points, maintained by the counties for emergency dispatch.
+# A supplement to the composite locator rather than a replacement: on a real
+# sample it agreed with the composite almost everywhere, added a point or two of
+# coverage by recovering from garbled input, and returned nothing at all rather
+# more often. Scored higher because it is readier to turn an address with no
+# physical point — a rural-route box — into a confident street match.
+ARKANSAS_NG911_GEOCODER_URL = (
+    "https://gis.arkansas.gov/arcgis/rest/services/Locator/"
+    "NG911_USPS_Address_Lookup/GeocodeServer/findAddressCandidates"
+)
+ARKANSAS_NG911_MIN_SCORE = float(os.getenv("ARKANSAS_NG911_MIN_SCORE", "90"))
+ARKANSAS_NG911_DELAY = float(os.getenv("ARKANSAS_NG911_DELAY", "0.25"))
 CENSUS_GEOCODER_URL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 CENSUS_GEOCODER_BENCHMARK = os.getenv("CENSUS_GEOCODER_BENCHMARK", "Public_AR_Current")
 CENSUS_GEOCODER_TIMEOUT = float(os.getenv("CENSUS_GEOCODER_TIMEOUT", "30"))

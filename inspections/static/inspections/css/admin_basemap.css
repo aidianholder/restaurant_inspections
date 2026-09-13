@@ -1,0 +1,3 @@
+/* The style's background layer is skipped when applying per-source, so the
+   container carries the land colour instead. Matches liberty's background. */
+.dj_map { background-color: #f8f4f0; }
