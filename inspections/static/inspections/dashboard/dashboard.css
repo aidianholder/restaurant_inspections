@@ -1,0 +1,158 @@
+/*
+ * Per-newspaper inspections dashboard.
+ *
+ * Every selector is prefixed `arhi-` and scoped under `.arhi-dashboard`, because
+ * this mounts directly into a newspaper's own page rather than an iframe. There
+ * are no ids anywhere — WEHCO's weather features already own `#map`, and the
+ * surest way not to collide is to have nothing to collide with.
+ *
+ * Sized by container query, not viewport: the component's width comes from
+ * whatever column the paper drops it into, which is not the window.
+ */
+
+.arhi-dashboard {
+  container-type: inline-size;
+  --arhi-ink: #1a1a1a;
+  --arhi-muted: #666;
+  --arhi-line: #e0ddd8;
+  --arhi-bg: #fff;
+  --arhi-accent: #8c1d1d;
+  --arhi-warn: #9a6700;
+  --arhi-sel: #fdf6e3;
+  --arhi-map-height: 460px;
+  color: var(--arhi-ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  box-sizing: border-box;
+}
+.arhi-dashboard *, .arhi-dashboard *::before, .arhi-dashboard *::after { box-sizing: inherit; }
+
+/* Map height: the reader needs the map AND the first row of controls visible
+   together to grasp that one drives the other. On a 480px phone, 360px is
+   already 45% of the screen. */
+@container (max-width: 640px)  { .arhi-dashboard { --arhi-map-height: 360px; } }
+@container (min-width: 1024px) { .arhi-dashboard { --arhi-map-height: 560px; } }
+/* Fallback for browsers without container queries. */
+@supports not (container-type: inline-size) {
+  @media (max-width: 640px)  { .arhi-dashboard { --arhi-map-height: 360px; } }
+  @media (min-width: 1024px) { .arhi-dashboard { --arhi-map-height: 560px; } }
+}
+
+.arhi-heading { font-size: 20px; margin: 0 0 10px; letter-spacing: -0.01em; }
+
+/* ---- map ---- */
+.arhi-map {
+  width: 100%; height: var(--arhi-map-height);
+  border: 1px solid var(--arhi-line); border-radius: 6px;
+  background: #f8f4f0; position: relative; overflow: hidden;
+}
+.arhi-map-note {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2;
+  background: rgba(255,255,255,.92); border: 1px solid var(--arhi-line);
+  border-radius: 4px; padding: 4px 9px; font-size: 12px; color: var(--arhi-warn);
+}
+.arhi-map-note[hidden] { display: none; }
+
+/* ---- controls ---- */
+.arhi-controls {
+  display: grid; gap: 10px; margin: 14px 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.arhi-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.arhi-field label { font-size: 12px; font-weight: 600; color: var(--arhi-muted); }
+.arhi-dashboard input[type="search"],
+.arhi-dashboard input[type="date"],
+.arhi-dashboard select {
+  width: 100%; padding: 8px 9px; font: inherit; font-size: 14px;
+  border: 1px solid #c9c5bd; border-radius: 4px; background: #fff; color: inherit;
+  min-width: 0;
+}
+.arhi-toggle { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.arhi-toggle input { margin: 0; }
+.arhi-status {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  font-size: 13px; color: var(--arhi-muted); margin-bottom: 8px;
+}
+.arhi-reset {
+  margin-left: auto; background: none; border: 0; padding: 0;
+  color: var(--arhi-accent); cursor: pointer; font: inherit; font-size: 13px;
+  text-decoration: underline;
+}
+
+/* ---- selected strip ---- */
+.arhi-selected {
+  border: 1px solid var(--arhi-accent); border-radius: 6px;
+  background: var(--arhi-sel); padding: 10px 12px; margin-bottom: 10px;
+}
+.arhi-selected[hidden] { display: none; }
+.arhi-selected-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--arhi-accent); margin-bottom: 6px;
+}
+.arhi-clear {
+  margin-left: auto; background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--arhi-accent); font: inherit; font-size: 12px; text-decoration: underline;
+}
+
+/* ---- table ---- */
+.arhi-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.arhi-table th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--arhi-muted); border-bottom: 1px solid var(--arhi-line);
+  padding: 8px 10px 8px 0; white-space: nowrap;
+}
+.arhi-table th button {
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
+}
+.arhi-table th button:hover { color: var(--arhi-accent); }
+.arhi-table td { padding: 9px 10px 9px 0; border-bottom: 1px solid #f0eeea; vertical-align: top; }
+.arhi-row { cursor: pointer; }
+.arhi-row:hover { background: #fbfaf8; }
+.arhi-row.arhi-is-selected { background: var(--arhi-sel); }
+.arhi-name { font-weight: 600; }
+.arhi-sub { color: var(--arhi-muted); font-size: 12px; }
+.arhi-detail-cell { padding: 0 !important; }
+.arhi-detail { padding: 4px 0 14px; }
+.arhi-group { margin: 10px 0 0; }
+.arhi-group-label { font-weight: 600; font-size: 13px; }
+.arhi-detail ul { margin: 4px 0 0; padding-left: 20px; }
+.arhi-detail li { font-size: 13px; margin-bottom: 3px; }
+.arhi-detail a { color: var(--arhi-accent); font-size: 13px; }
+.arhi-empty { color: var(--arhi-muted); padding: 22px 0; }
+
+/* Violation counts, most serious first. A zero must never be the loudest thing
+   in the row — emphasis is reserved for counts that actually exist. */
+.arhi-lvl {
+  display: inline-block; min-width: 24px; text-align: center; font-size: 12px;
+  font-variant-numeric: tabular-nums; padding: 2px 5px; border-radius: 3px;
+  border: 1px solid var(--arhi-line); color: var(--arhi-muted); background: #fff;
+}
+.arhi-lvl.arhi-p  { border-color: var(--arhi-accent); color: #fff; background: var(--arhi-accent); font-weight: 600; }
+.arhi-lvl.arhi-pf { border-color: var(--arhi-accent); color: var(--arhi-accent); }
+.arhi-lvl.arhi-zero { border-color: #ebe8e3; background: #fff; color: #c4c0b9; font-weight: 400; }
+.arhi-clean { color: #1f6f43; font-size: 13px; }
+
+/* Columns drop rather than truncate: the dropdown carries everything anyway. */
+.arhi-col-city, .arhi-col-county, .arhi-col-type { }
+@container (max-width: 1023px) { .arhi-col-county, .arhi-col-type { display: none; } }
+@container (max-width: 767px)  { .arhi-col-city, .arhi-col-levels { display: none; } }
+@supports not (container-type: inline-size) {
+  @media (max-width: 1023px) { .arhi-col-county, .arhi-col-type { display: none; } }
+  @media (max-width: 767px)  { .arhi-col-city, .arhi-col-levels { display: none; } }
+}
+
+/* ---- pager ---- */
+.arhi-pager {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px; font-size: 14px;
+}
+.arhi-pager button {
+  font: inherit; font-size: 14px; padding: 6px 14px; cursor: pointer;
+  border: 1px solid #c9c5bd; border-radius: 4px; background: #fff; color: inherit;
+}
+.arhi-pager button:disabled { opacity: .45; cursor: default; }
+.arhi-pager-count { color: var(--arhi-muted); }
+.arhi-fullscreen { margin-left: auto; color: var(--arhi-accent); font-size: 13px; }
+
+.arhi-loading { opacity: .55; transition: opacity .15s; }

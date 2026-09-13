@@ -19,6 +19,9 @@ ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0
 
 INSTALLED_APPS = [
     "django.contrib.gis",
+    # For ArrayField on Dashboard.counties — a readership area is a list of
+    # counties, and Postgres stores it as one rather than needing a join table.
+    "django.contrib.postgres",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -153,6 +156,19 @@ ARKANSAS_GIS_ACCEPTED_TYPES = {
     "StreetAddressExt", "POI",
 }
 ARKANSAS_GIS_MIN_SCORE = float(os.getenv("ARKANSAS_GIS_MIN_SCORE", "80"))
+
+# NG911/USPS address points, maintained by the counties for emergency dispatch.
+# A supplement to the composite locator rather than a replacement: on a real
+# sample it agreed with the composite almost everywhere, added a point or two of
+# coverage by recovering from garbled input, and returned nothing at all rather
+# more often. Scored higher because it is readier to turn an address with no
+# physical point — a rural-route box — into a confident street match.
+ARKANSAS_NG911_GEOCODER_URL = (
+    "https://gis.arkansas.gov/arcgis/rest/services/Locator/"
+    "NG911_USPS_Address_Lookup/GeocodeServer/findAddressCandidates"
+)
+ARKANSAS_NG911_MIN_SCORE = float(os.getenv("ARKANSAS_NG911_MIN_SCORE", "90"))
+ARKANSAS_NG911_DELAY = float(os.getenv("ARKANSAS_NG911_DELAY", "0.25"))
 CENSUS_GEOCODER_URL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 CENSUS_GEOCODER_BENCHMARK = os.getenv("CENSUS_GEOCODER_BENCHMARK", "Public_AR_Current")
 CENSUS_GEOCODER_TIMEOUT = float(os.getenv("CENSUS_GEOCODER_TIMEOUT", "30"))
@@ -184,6 +200,15 @@ OPENAI_BATCH_SIZE = int(os.getenv("OPENAI_BATCH_SIZE", "10"))
 # Batches in flight at once. Low on purpose: the gain over serial is most of the
 # way there by four, and beyond that a wide range starts tripping rate limits.
 OPENAI_MAX_PARALLEL = int(os.getenv("OPENAI_MAX_PARALLEL", "4"))
+
+# Basemap for the public dashboard. OpenFreeMap by default: no key, no usage
+# limits, and a self-contained style whose glyphs and sprites come from the same
+# host. Point it at the self-hosted protostyle3.json once the Noto fonts are in
+# the bucket — that needs the pmtiles library vendored alongside MapLibre, since
+# the style's source is a pmtiles:// URL.
+DASHBOARD_MAP_STYLE = os.getenv(
+    "DASHBOARD_MAP_STYLE", "https://tiles.openfreemap.org/styles/liberty"
+)
 
 # Scraper behaviour.
 SCRAPER_DELAY_SECONDS = float(os.getenv("SCRAPER_DELAY_SECONDS", "1.5"))
