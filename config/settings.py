@@ -89,6 +89,22 @@ STATIC_URL = "static/"
 # traverse in production; collected assets go somewhere www-data can read.
 STATIC_ROOT = Path(os.getenv("DJANGO_STATIC_ROOT") or BASE_DIR / "staticfiles")
 
+# Hashed filenames in production, so a changed asset is a new URL. Without this a
+# stale `dashboard.js` sits in the CDN and in readers' browsers for the whole of
+# nginx's `expires 30d`, and the only way out is a manual cache purge — which is
+# not a step anyone should have to remember after a one-line front-end fix.
+#
+# Off under DEBUG: `runserver` serves straight from the app directories and the
+# manifest only exists once `collectstatic` has run.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "config.storage.ForgivingManifestStaticFilesStorage"
+        if not DEBUG
+        else "django.contrib.staticfiles.storage.StaticFilesStorage"
+    },
+}
+
 # Inspection report PDFs are ingested content, not project assets, so they live
 # under MEDIA_ROOT. Swap in django-storages (S3/R2) later without a model change.
 MEDIA_URL = "media/"

@@ -205,8 +205,26 @@ export function mountDashboard(root, options) {
       // Thousands of pins at low zoom is an unreadable smear; MapLibre's own
       // clustering is free and looks like what readers expect.
       cluster: true,
-      clusterRadius: 48,
-      clusterMaxZoom: 13,
+      // Three levers, because "clustering is too aggressive" is really two
+      // complaints with different fixes.
+      //
+      // `clusterMinPoints` stops small groups bubbling at all. A pair of
+      // restaurants in a sparse county was drawn as a "2" that hid both and cost
+      // a click to open — strictly worse than two pins. Under five points there
+      // is nothing to smear, so they are always drawn as themselves, at any zoom.
+      //
+      // `clusterRadius` is how close two pins must be to merge, so it governs how
+      // *progressively* dense knots break up rather than all at once. Screen
+      // distance between two fixed points doubles per zoom level, so halving the
+      // radius buys roughly one zoom level of separation.
+      //
+      // `clusterMaxZoom` is the hard stop, and the only lever that moves Little
+      // Rock, where clusters run to hundreds of points and minPoints cannot help.
+      // Lower it much further and the metro becomes the smear clustering exists
+      // to prevent.
+      clusterMinPoints: 5,
+      clusterRadius: 32,
+      clusterMaxZoom: 12,
     });
 
     map.addLayer({

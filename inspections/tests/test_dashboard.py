@@ -255,7 +255,9 @@ class DeliveryTests(ApiTestCase):
         r = self.client.get(reverse("dashboard-page", args=["paper"]))
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "arhi-mount")
-        self.assertContains(r, "dashboard/dashboard.js")
+        # ManifestStaticFilesStorage hashes the filename when DEBUG is off, so
+        # match the stem rather than pinning the exact name.
+        self.assertRegex(r.content.decode(), r"dashboard/dashboard(\.[0-9a-f]+)?\.js")
         self.assertContains(r, 'id="arhi-config"')
 
     def test_the_page_can_be_framed(self):

@@ -332,6 +332,13 @@ def page(request, slug):
     })
 
 
+# Short, explicit, and revalidated: this is a dynamic document — it carries the
+# dashboard's configuration and the hashed URL of the current bundle — but it ends
+# in `.js`, and a CDN with no Cache-Control to go on will happily treat it as a
+# static asset and hold it for hours. The assets it points at are immutable
+# (`ForgivingManifestStaticFilesStorage` hashes them), so this pointer is the only
+# thing that has to turn over quickly for a deploy to reach readers.
+@cache_control(public=True, max_age=60)
 def loader(request, slug):
     """The one-line snippet: mount the component into the newspaper's own page.
 

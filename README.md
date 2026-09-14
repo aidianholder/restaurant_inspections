@@ -685,6 +685,7 @@ in `.env`.
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env          # then edit DB credentials
+                              # and set DJANGO_DEBUG=True for local work
 createdb health_inspections
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py createsuperuser
@@ -796,10 +797,19 @@ pages, so both look fine until a newspaper embeds the component:
   itself, in `dashboard_views.cross_origin`, so only the static files need nginx's
   help.
 
-Because `/static/` is served with `expires 30d` and unhashed filenames, a bad
-asset stays in readers' browsers for a month. Anything more than a one-off is
-worth switching to `ManifestStaticFilesStorage`, which hashes the names at
-`collectstatic` time.
+`/static/` is served with `expires 30d`, so a deploy has to invalidate its own
+caches or a corrected asset sits in the CDN and in readers' browsers for a month.
+That is what `config.storage.ForgivingManifestStaticFilesStorage` is for: from
+`collectstatic` on, `dashboard.js` is published as `dashboard.<hash>.js` and a
+changed file is simply a new URL. It is selected only when `DEBUG` is off, which
+is why local work wants `DJANGO_DEBUG=True` — `runserver` serves assets straight
+from the app directories, with no manifest to read.
+
+One gap to know about: Django rewrites hashed names inside CSS `url()`, but
+**not** inside ES module `import` statements. `dashboard.js` pulls MapLibre and
+pmtiles in by relative path, so those vendor files keep their plain names and
+stay cached for the full 30 days. It costs nothing day to day — vendor bundles
+change rarely — but bumping MapLibre does still need a manual CDN purge.
 
 ### Notes
 
