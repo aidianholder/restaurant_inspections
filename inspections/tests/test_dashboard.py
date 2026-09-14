@@ -284,6 +284,22 @@ class DeliveryTests(ApiTestCase):
         ):
             self.assertEqual(self.client.get(reverse(name, args=args)).status_code, 404, name)
 
+    def test_the_config_carries_the_basemap_and_its_font_names(self):
+        """Which glyphs exist belongs to the style, not the component.
+
+        Our bucket carries Regular/Medium/Italic; OpenFreeMap carries
+        Regular/Bold/Italic — so the style and the font names have to move
+        together. Single names only: MapLibre joins a multi-font stack with
+        commas into one glyph URL, which a static bucket has no directory for.
+        """
+        body = self.client.get(reverse("dashboard-loader", args=["paper"])).content.decode()
+        self.assertIn("protostyle3.json", body)
+        self.assertIn('"fonts"', body)
+        config = json.loads(body.split("var config = ", 1)[1].split(";\n", 1)[0])
+        self.assertEqual(set(config["fonts"]), {"regular", "emphasis"})
+        for name in config["fonts"].values():
+            self.assertNotIn(",", name, "a comma-joined stack has no glyph directory")
+
     def test_the_config_lists_the_inspection_types_actually_present(self):
         r = self.client.get(reverse("dashboard-loader", args=["paper"]))
         self.assertIn('"types": ["Follow-up", "Routine"]', r.content.decode())

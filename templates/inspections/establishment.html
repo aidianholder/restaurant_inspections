@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+{# Reader-facing. Deliberately standalone rather than extending base.html: that #}
+{# carries navigation to Browse, Retrieve, Output and Admin, which are going    #}
+{# behind a VPN or a login. Showing a reader links they cannot follow is worse  #}
+{# than showing none.                                                           #}
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ facility.name }} — health inspections</title>
+  <meta name="description" content="Health inspection history for {{ facility.name }}{% if facility.city %}, {{ facility.city }}{% endif %}.">
+  <style>
+    :root { --ink:#1a1a1a; --muted:#666; --line:#e0ddd8; --bg:#fbfaf8;
+            --accent:#8c1d1d; --ok:#1f6f43; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink);
+           font:16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+    .where { color: var(--muted); font-size: 15px; margin: 0 0 26px; }
+    .about { background:#fff; border:1px solid var(--line); border-radius:6px;
+             padding:14px 18px; margin-bottom:28px; }
+    .about p { font-size:13px; line-height:1.5; color:var(--muted); margin:0 0 8px; }
+    .about p:last-child { margin-bottom:0; }
+    .visit { background:#fff; border:1px solid var(--line); border-radius:6px;
+             padding:18px 20px; margin-bottom:16px; }
+    .visit-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+                  margin-bottom:4px; }
+    .visit-date { font-size:18px; font-weight:600; }
+    .pill { display:inline-block; font-size:11px; text-transform:uppercase;
+            letter-spacing:.05em; padding:2px 8px; border-radius:20px;
+            border:1px solid var(--line); color:var(--muted); }
+    .count { font-size:14px; color:var(--accent); }
+    .count.clean { color: var(--ok); }
+    .group { margin-top:14px; }
+    .group-label { font-weight:600; font-size:14px; }
+    .group ul { margin:5px 0 0; padding-left:20px; }
+    .group li { font-size:14px; margin-bottom:5px; }
+    .correct { color:var(--muted); font-size:12px; }
+    .report { display:inline-block; margin-top:14px; font-size:14px; color:var(--accent); }
+    .none { color:var(--muted); }
+    footer { margin-top:32px; color:var(--muted); font-size:13px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>{{ facility.name }}</h1>
+  <p class="where">
+    {{ facility.address_display }}{% if facility.county %} · {{ facility.county }} County{% endif %}
+  </p>
+
+  {% if history %}
+    <div class="about">
+      {% for paragraph in boilerplate %}<p>{{ paragraph }}</p>{% endfor %}
+    </div>
+
+    {% for visit in history %}
+      <div class="visit">
+        <div class="visit-head">
+          <span class="visit-date">{{ visit.inspection.date|date:"F j, Y" }}</span>
+          {% if visit.inspection.inspection_type %}
+            <span class="pill">{{ visit.inspection.inspection_type }}</span>
+          {% endif %}
+          {% if visit.count %}
+            <span class="count">{{ visit.count }} violation{{ visit.count|pluralize }}</span>
+          {% else %}
+            <span class="count clean">No violations</span>
+          {% endif %}
+        </div>
+
+        {% for label, violations in visit.groups %}
+          <div class="group">
+            <div class="group-label">{{ label }}</div>
+            <ul>
+              {% for v in violations %}
+                <li>
+                  {{ v.inspector_comments|default:v.short_description|default:v.code_explanation }}
+                  {% if v.correct_by %}
+                    <div class="correct">Correct by {{ v.correct_by|date:"F j, Y" }}</div>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endfor %}
+
+        {% if visit.report_url %}
+          <a class="report" href="{{ visit.report_url }}" target="_blank" rel="noopener">
+            Read the full inspection report (PDF) →</a>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="none">No inspection details are available for this establishment yet.</p>
+  {% endif %}
+
+  <footer>
+    Inspections are carried out by the Arkansas Department of Health. The wording of
+    each observation is the inspector's own.
+  </footer>
+</div>
+</body>
+</html>

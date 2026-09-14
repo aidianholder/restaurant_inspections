@@ -239,6 +239,56 @@ the form. If more than one person has access and that isn't comfortable, the
 stricter arrangement is a fixed provenance preamble in code concatenated with the
 editable rules from the row.
 
+## Public and staff surfaces
+
+Two audiences, split by URL so the whole staff side can go behind a VPN or a
+login in one stroke.
+
+| Public | Staff |
+|---|---|
+| `/establishment/<slug>/` | `/` (browse) |
+| `/dashboard/<slug>/…` | `/facility/<slug>/` |
+| `/embed/<slug>/…` | `/retrieve/…`, `/output/…`, `/admin/` |
+
+**Gate by allowlist, not denylist.** Default-deny with the public prefixes
+allowed means a new staff view is private the day it is written, rather than the
+day somebody remembers to add it.
+
+Two things must stay reachable alongside the public prefixes:
+
+- **`/media/`** — the reader-facing page links to inspection report PDFs. Gate it
+  and every "Read the full inspection report" link breaks for readers, silently.
+- **`/static/`** — the dashboard's JavaScript, CSS and vendored MapLibre.
+
+Note that `/` is the *staff* browse page. Once the staff side is gated there is
+no public landing page at the bare domain; readers arrive via a paper's embed or
+a direct establishment link.
+
+### The reader's establishment page
+
+`/establishment/<slug>/` is a separate view and template from the staff
+`facility_detail`, not the same template with `{% if request.user.is_staff %}`
+around the sensitive parts. Conditionals are how internal detail leaks: a
+separate template *cannot* accidentally render the geocoder used, because that
+markup does not exist in it.
+
+It carries no site navigation — the staff links are going behind a gate, and
+showing a reader links they cannot follow is worse than showing none. It also
+leaves out coordinates and the geocoding source, and the "state site shows N"
+badge, which is a discrepancy for us to reconcile rather than something to
+explain to a reader.
+
+**Inspections whose details were never retrieved are left out entirely.**
+Publishing "1 violation" under a named business when the state recorded five and
+we simply have not fetched them yet is worse than saying nothing. An inspection
+the state recorded as having *no* observations is kept, because `observation_count`
+of 0 comes from the state's own results grid — it means nothing was cited, not
+that we failed to look.
+
+`Facility.get_absolute_url()` is this page, since it is the record's canonical
+public address; the admin's "View on site" and the dashboard both land here.
+Staff templates link to `facility-detail` explicitly.
+
 ## Dashboards
 
 A `Dashboard` is one newspaper's public map-and-table view over its readership
@@ -301,9 +351,32 @@ with MapLibre vendored beside them.
 - Sized by container query, not viewport: the component's width comes from
   whatever column it is dropped into. Map height 360/460/560px; table columns
   drop rather than truncate, since the dropdown carries everything anyway.
-- `DASHBOARD_MAP_STYLE` picks the basemap, defaulting to OpenFreeMap. Pointing it
-  at the self-hosted `protostyle3.json` also needs the pmtiles library vendored,
-  since that style's source is a `pmtiles://` URL.
+- The basemap is **our own PMTiles archive**, `protostyle3.json` on DigitalOcean
+  Spaces. Self-hosted on purpose: a newspaper embed spikes the day a story runs,
+  which is exactly when a metered or donation-funded tile service is worst placed
+  to absorb it, and there is no key to leak in a public page. `DASHBOARD_MAP_STYLE`
+  changes it.
+- That means two more vendored files, `pmtiles.js` and `fflate.js`, and one
+  patched line: pmtiles' ESM build has a bare `import … from "fflate"`, which a
+  browser cannot resolve without an import map or a bundler, so the vendored copy
+  points at `./fflate.js`. MapLibre is taught the `pmtiles://` scheme with
+  `addProtocol` before any map is built.
+
+#### Fonts are a property of the style, not the component
+
+`DASHBOARD_MAP_FONTS` names the glyphs the style's font source actually carries.
+Ours has **Regular, Medium and Italic**; OpenFreeMap has **Regular, Bold and
+Italic** — so switching `DASHBOARD_MAP_STYLE` means switching these too.
+
+Two traps, both of which produce labels that silently do not draw:
+
+- **Single font names only.** MapLibre joins a multi-font stack into *one*
+  comma-separated glyph URL (`Noto Sans Medium,Open Sans Semibold/0-255.pbf`).
+  A hosted service resolves that server-side; a static bucket has no such
+  directory and 404s.
+- **Set `text-font` at the layer level, not only inside a `format` expression.**
+  Otherwise MapLibre additionally resolves its own default stack, "Open Sans
+  Regular,Arial Unicode MS Regular", which is both composite and absent.
 
 ## Scheduled scrapes
 
