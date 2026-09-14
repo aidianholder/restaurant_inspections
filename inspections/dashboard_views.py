@@ -24,6 +24,7 @@ makes rapid sorting free.
 """
 
 import datetime as dt
+import functools
 import json
 import logging
 
@@ -165,6 +166,34 @@ def _dashboard(slug):
     return get_object_or_404(Dashboard, slug=slug, is_active=True)
 
 
+def cross_origin(view):
+    """Let the mounted component read this endpoint from a newspaper's own page.
+
+    `loader` mounts the dashboard straight into the paper's DOM rather than an
+    iframe, so every fetch the component makes runs against the paper's origin,
+    not ours, and a JSON response without this header is fetched and then thrown
+    away by the browser. The `<script src>` that loads the snippet is exempt from
+    this, which is what makes the failure look like it comes from nowhere: the
+    loader arrives fine and only the data is blocked.
+
+    A wildcard rather than an allow-list of papers. These three endpoints are
+    public, read-only and unauthenticated, and the component fetches them with
+    `credentials: "same-origin"`, so there is nothing here that an origin check
+    would protect. It also keeps the responses cacheable: echoing the origin back
+    would need `Vary: Origin`, which would fragment the shared cache in front of
+    `map` and give anything that ignored the header a way to serve one paper's
+    response to another.
+    """
+    @functools.wraps(view)
+    def wrapper(request, *args, **kwargs):
+        response = view(request, *args, **kwargs)
+        response["Access-Control-Allow-Origin"] = "*"
+        return response
+
+    return wrapper
+
+
+@cross_origin
 @gzip_page
 def rows(request, slug):
     """One page of the table."""
@@ -208,6 +237,7 @@ def rows(request, slug):
 # admin pages carrying a CSRF token beside reflected search terms — is the setup
 # BREACH needs. Production nginx would also have to list application/json in
 # gzip_types, which it does not by default.
+@cross_origin
 @gzip_page
 @cache_control(public=True, max_age=60)
 def map_data(request, slug):
@@ -251,6 +281,7 @@ def map_data(request, slug):
     )
 
 
+@cross_origin
 def facility_row(request, slug, facility_id):
     """One row, for a pin click whose row is not on the current page.
 
@@ -301,6 +332,13 @@ def page(request, slug):
     })
 
 
+# Short, explicit, and revalidated: this is a dynamic document — it carries the
+# dashboard's configuration and the hashed URL of the current bundle — but it ends
+# in `.js`, and a CDN with no Cache-Control to go on will happily treat it as a
+# static asset and hold it for hours. The assets it points at are immutable
+# (`ForgivingManifestStaticFilesStorage` hashes them), so this pointer is the only
+# thing that has to turn over quickly for a deploy to reach readers.
+@cache_control(public=True, max_age=60)
 def loader(request, slug):
     """The one-line snippet: mount the component into the newspaper's own page.
 

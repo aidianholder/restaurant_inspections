@@ -13,7 +13,7 @@ import logging
 
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from . import latest_inspection
@@ -67,12 +67,24 @@ def upsert_facility(data, county):
         facility.fingerprint = fp
 
     try:
-        facility.save()
-    except Exception:
-        # A fingerprint collision means another row already represents this
-        # address; fall back to that record rather than failing the whole run.
+        # Savepoint, so a rejected row leaves the surrounding transaction usable.
+        # Without one the recovery query below is the statement that raises, with
+        # TransactionManagementError burying whatever the database actually
+        # objected to — the original error then survives only in the log.
+        with transaction.atomic():
+            facility.save()
+    except IntegrityError:
+        # Only a fingerprint collision is recoverable: another row already
+        # represents this address, so reuse it rather than failing the run. Any
+        # other IntegrityError is a real fault — a worker still holding
+        # pre-migration models and omitting NOT NULL columns, say — and must not
+        # be disguised as a collision, which is how one such bug spent a day
+        # reported as a transaction error.
+        existing = Facility.objects.filter(fingerprint=fp).first()
+        if existing is None:
+            raise
         logger.warning("Facility save collided for %r; reusing existing row", data["name"])
-        facility = Facility.objects.get(fingerprint=fp)
+        facility = existing
         created = False
 
     return facility, created
