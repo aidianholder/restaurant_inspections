@@ -752,12 +752,68 @@ markup or report layout rather than silently importing empty rows.
 
 ## Deployment notes
 
+### Deploying a change
+
+```bash
+git pull
+.venv/bin/pip install -r requirements.txt        # only if requirements changed
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py collectstatic --noinput
+systemctl restart inspections.service            # web
+systemctl restart inspections-qcluster.service   # worker
+```
+
+Both restarts and the `collectstatic` are load-bearing, and each one fails
+quietly rather than loudly — the site keeps serving, so nothing draws attention
+to the step that was missed:
+
+- **Skipping `collectstatic`** leaves `STATIC_ROOT` without the dashboard bundle.
+  The embed snippet still loads, because Django serves that, so the failure looks
+  like it comes from nowhere: `import()` of `dashboard.js` 404s and the browser
+  reports it as a CORS error rather than a missing file. Front-end assets live in
+  `inspections/static/` and are not served from there in production.
+- **Skipping the worker restart** is the failure the box under [Setup](#setup)
+  describes. Its shape depends on the migration: a *removed* column fails every
+  job immediately, while an *added* `NOT NULL` column fails only the jobs that
+  insert a new row — so a scrape of a county with no new establishments still
+  succeeds, and the breakage looks intermittent rather than total.
+
+### nginx
+
+Two requirements the dashboard embed depends on. Neither affects this site's own
+pages, so both look fine until a newspaper embeds the component:
+
+- **`.mjs` needs a JavaScript MIME type.** nginx ships the mapping from 1.21.1;
+  on anything older (Ubuntu 22.04 pins 1.18) `maplibre-gl.mjs` is served as
+  `application/octet-stream` and the browser refuses to execute it as a module.
+  Add `text/javascript mjs;` to `/etc/nginx/mime.types`, then **restart** nginx —
+  a reload does not pick that file up.
+- **`/static/` needs `Access-Control-Allow-Origin`.** The loader mounts the
+  component into the paper's own page, so `import()` of `dashboard.js` is a
+  cross-origin module fetch — and ES module imports are CORS-checked even though a
+  plain `<script src>` is not. Set `add_header Access-Control-Allow-Origin "*"
+  always;` in the `location /static/` block. The JSON API sets the same header
+  itself, in `dashboard_views.cross_origin`, so only the static files need nginx's
+  help.
+
+Because `/static/` is served with `expires 30d` and unhashed filenames, a bad
+asset stays in readers' browsers for a month. Anything more than a one-off is
+worth switching to `ManifestStaticFilesStorage`, which hashes the names at
+`collectstatic` time.
+
+### Notes
+
+- **All configuration reaches Django through `.env`.** The systemd units pass only
+  `DJANGO_SETTINGS_MODULE`, and nothing inherits an interactive shell's
+  environment — so a variable exported in `~/.bashrc` is visible to `manage.py`
+  over ssh and invisible to gunicorn and the worker. A setting can look correct
+  from the shell while the live site reads an empty string.
 - `django-q2` uses the Postgres database as its broker, so production needs only
   Postgres — no Redis. Run `manage.py qcluster` under systemd alongside the app.
-- **Deploys must restart the worker after `migrate`,** not just the web process.
-  A worker left running across a schema change queries the old columns and fails
-  every job. Make the restart part of the deploy script rather than a step someone
-  has to remember.
+- **Deploys must restart the worker after `migrate`,** not just the web process —
+  it is the last line of [Deploying a change](#deploying-a-change) for a reason. A
+  worker left running across a schema change keeps building queries from the model
+  definitions it loaded at start-up.
 - Report PDFs are written to `MEDIA_ROOT`. Swap in `django-storages` (S3/R2) for
   production without a model change; they are deliberately *not* database blobs.
 - `SCRAPER_DELAY_SECONDS` throttles requests to the state's server. Don't set it
