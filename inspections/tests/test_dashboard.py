@@ -309,3 +309,21 @@ class DeliveryTests(ApiTestCase):
             self.assertEqual(
                 self.client.post(reverse(name, args=["paper"])).status_code, 405, name
             )
+
+    def test_the_api_is_readable_from_a_newspapers_own_origin(self):
+        """The component is mounted into the paper's page, so its fetches are
+        cross-origin and a response without this header is discarded unread.
+
+        The loader itself is a <script src>, which is exempt, so losing this
+        header breaks the data while the snippet still appears to load.
+        """
+        for name, args in (
+            ("dashboard-rows", ["paper"]),
+            ("dashboard-map", ["paper"]),
+            ("dashboard-facility", ["paper", self.alpha.pk]),
+        ):
+            r = self.client.get(
+                reverse(name, args=args), headers={"origin": "https://www.example.com"}
+            )
+            self.assertEqual(r.status_code, 200, name)
+            self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*", name)
