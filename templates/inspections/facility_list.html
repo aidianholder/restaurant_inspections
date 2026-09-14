@@ -51,7 +51,8 @@
   </tr>
   {% for f in facilities %}
   <tr>
-    <td><a href="{{ f.get_absolute_url }}">{{ f.name }}</a><br>
+    {# Explicitly the staff view: get_absolute_url is the reader-facing page. #}
+    <td><a href="{% url 'facility-detail' f.slug %}">{{ f.name }}</a><br>
         <span style="color:#888;font-size:12px">{{ f.street }}</span></td>
     <td>{{ f.city }}</td>
     <td>{{ f.county }}</td>

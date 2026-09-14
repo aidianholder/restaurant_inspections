@@ -1,4 +1,5 @@
-"""The per-newspaper dashboard: a JSON API, and a page that consumes it.
+"""The reader-facing pages: the per-newspaper dashboard, its JSON API, and the
+establishment page the dashboard links out to.
 
 The API is the foundation, not an alternative to the page. Even a fully
 server-rendered version would need it — otherwise sorting a column is a full page
@@ -27,7 +28,7 @@ import json
 import logging
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -38,7 +39,8 @@ from django.views.decorators.cache import cache_control
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.gzip import gzip_page
 
-from .models import Dashboard, PriorityLevel, Violation
+from .models import Dashboard, Facility, PriorityLevel, Violation
+from .output import BOILERPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +282,7 @@ def _config(dashboard, request):
         "counties": list(dashboard.counties or []),
         "types": list(kinds),
         "mapStyle": settings.DASHBOARD_MAP_STYLE,
+        "fonts": dict(settings.DASHBOARD_MAP_FONTS),
     }
 
 
@@ -326,3 +329,77 @@ def loader(request, slug):
         request=request,
     )
     return HttpResponse(script, content_type="application/javascript")
+
+
+# Violations with no priority level still happened, so they are shown under their
+# own heading rather than dropped. Mirrors what the dashboard's row dropdown does
+# in JavaScript, so a reader sees the same shape in both places.
+_CATEGORIES = [
+    (PriorityLevel.PRIORITY, "Priority"),
+    (PriorityLevel.PRIORITY_FOUNDATION, "Priority Foundation"),
+    (PriorityLevel.CORE, "Core"),
+]
+
+
+def _grouped(violations):
+    """[(label, [violation, ...])] for the categories actually cited."""
+    buckets = {code: [] for code, _ in _CATEGORIES}
+    other = []
+    for violation in violations:
+        buckets.get(violation.priority_level, other).append(violation)
+
+    groups = [(label, buckets[code]) for code, label in _CATEGORIES if buckets[code]]
+    if other:
+        groups.append(("Other observations", other))
+    return groups
+
+
+def establishment(request, slug):
+    """One establishment's inspection history, for readers.
+
+    A separate view and template from the staff `facility_detail` rather than one
+    template with `{% if %}` around the sensitive parts. Conditionals are how
+    internal detail leaks: this template cannot accidentally render the
+    coordinates or the geocoder used, because that markup does not exist in it.
+    It also carries no site navigation, since the staff pages are going behind a
+    VPN or a login and a reader must not be shown links they cannot follow.
+
+    Inspections whose details have never been retrieved are left out entirely.
+    Publishing "1 violation" under a named business when the state recorded five
+    and we simply have not fetched them yet would be worse than saying nothing.
+    """
+    facility = get_object_or_404(Facility, slug=slug)
+
+    inspections = (
+        facility.inspections.exclude(
+            observation_count__gt=0,
+            details_scraped_at__isnull=True,
+            report_parsed_at__isnull=True,
+        )
+        .prefetch_related(
+            # select_related on the item keeps the short descriptions from
+            # costing one query per violation.
+            Prefetch("violations", queryset=Violation.objects.select_related("item"))
+        )
+        .order_by("-date", "-sequence_within_day", "-pk")
+    )
+
+    history = []
+    for inspection in inspections:
+        violations = list(inspection.violations.all())
+        history.append({
+            "inspection": inspection,
+            "groups": _grouped(violations),
+            "count": len(violations),
+            "report_url": inspection.report_pdf.url if inspection.report_pdf
+                          else inspection.report_source_url,
+        })
+
+    return render(request, "inspections/establishment.html", {
+        "facility": facility,
+        "history": history,
+        # Reused from the export so there is one wording for what the categories
+        # mean, not two that can drift apart.
+        "boilerplate": BOILERPLATE,
+        "hidden_count": facility.inspections.count() - len(history),
+    })

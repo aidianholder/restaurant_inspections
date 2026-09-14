@@ -16,7 +16,20 @@
 
 // Named imports: MapLibre's ESM build has no default export, and pulling in
 // only what is used keeps the intent visible.
-import { Map as MapLibreMap, NavigationControl, LngLatBounds } from "../vendor/maplibre-gl.mjs";
+import {
+  Map as MapLibreMap, NavigationControl, LngLatBounds, addProtocol,
+} from "../vendor/maplibre-gl.mjs";
+import { Protocol } from "../vendor/pmtiles.js";
+
+// The basemap is a single .pmtiles archive on our own storage, so MapLibre has
+// to be taught the `pmtiles://` scheme before any map is built. Self-hosted on
+// purpose: a newspaper embed spikes the day a story runs, which is exactly when
+// a metered or donation-funded tile service is worst placed to absorb it.
+// Registered once per page, however many dashboards are mounted.
+if (!window.__arhiPmtilesRegistered) {
+  addProtocol("pmtiles", new Protocol().tile);
+  window.__arhiPmtilesRegistered = true;
+}
 
 const SEARCH_DEBOUNCE_MS = 300;
 const LABEL_MIN_ZOOM = 16;      // where names stop cluttering the view
@@ -50,6 +63,12 @@ function formatDate(iso) {
 
 export function mountDashboard(root, options) {
   const api = options.apiBase.replace(/\/$/, "");
+  // Which glyphs exist is a property of the style's font source, not of this
+  // component: our own bucket carries Regular/Medium/Italic, OpenFreeMap carries
+  // Regular/Bold/Italic. Single names only — MapLibre joins a multi-font stack
+  // with commas into one glyph URL, which a static bucket has no directory for.
+  const fonts = Object.assign(
+    { regular: "Noto Sans Regular", emphasis: "Noto Sans Medium" }, options.fonts || {});
   const state = {
     q: "", county: "", from: "", to: "", type: "", cited: false,
     sort: "-date", page: 1, selected: null,
@@ -205,7 +224,7 @@ export function mountDashboard(root, options) {
       filter: ["has", "point_count"],
       layout: {
         "text-field": ["get", "point_count_abbreviated"],
-        "text-font": ["Noto Sans Bold", "Open Sans Bold", "Arial Unicode MS Bold"],
+        "text-font": [fonts.emphasis],
         "text-size": 12,
       },
       paint: { "text-color": "#fff" },
@@ -235,11 +254,16 @@ export function mountDashboard(root, options) {
     // will not clutter the view, and lets MapLibre drop colliding labels; the
     // other follows the selection and is always drawn, whatever the zoom.
     const labelLayout = (collide) => ({
+      // Set at the layer level as well as inside the format sections. Without it
+      // MapLibre still resolves its own default stack — "Open Sans Regular,
+      // Arial Unicode MS Regular" — as one comma-joined glyph URL, which a
+      // self-hosted font directory has no entry for.
+      "text-font": [fonts.regular],
       "text-field": [
         "format",
-        ["get", "name"], { "text-font": ["literal", ["Noto Sans Medium", "Open Sans Semibold", "Arial Unicode MS Bold"]] },
+        ["get", "name"], { "text-font": ["literal", [fonts.emphasis]] },
         "\n", {},
-        ["get", "address"], { "text-font": ["literal", ["Noto Sans Regular", "Open Sans Regular", "Arial Unicode MS Regular"]], "font-scale": 0.82 },
+        ["get", "address"], { "text-font": ["literal", [fonts.regular]], "font-scale": 0.82 },
       ],
       "text-size": 12,
       "text-offset": [0, 1.1],
@@ -265,6 +289,22 @@ export function mountDashboard(root, options) {
     map.on("click", "arhi-points", (event) => {
       const id = event.features[0].properties.id;
       selectFacility(id, { fromMap: true });
+    });
+
+    // Clicking the map away from a pin clears the selection, the same as the
+    // Clear link. Only the point layers count as "a facility": a cluster is a
+    // navigation target, so clicking one zooms in *and* drops the selection,
+    // which is what the reader means by clicking somewhere else.
+    //
+    // MapLibre fires this alongside the layer handlers above, so it has to
+    // hit-test rather than assume — otherwise selecting a pin would immediately
+    // deselect it again.
+    map.on("click", (event) => {
+      if (state.selected === null) return;
+      const onFacility = map.queryRenderedFeatures(event.point, {
+        layers: ["arhi-points", "arhi-selected-point"].filter((id) => map.getLayer(id)),
+      });
+      if (!onFacility.length) selectFacility(null);
     });
     map.on("click", "arhi-clusters", (event) => {
       const feature = event.features[0];
