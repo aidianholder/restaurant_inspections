@@ -466,7 +466,9 @@ export function mountDashboard(root, options) {
     });
 
     const link = el("a", null, "All inspections for this establishment →");
-    link.href = row.url;
+    // row.url is root-relative; resolve it against the API's origin so an embed
+    // links to our establishment page, not a path on the host paper's site.
+    link.href = new URL(row.url, api).href;
     link.target = "_blank";
     link.rel = "noopener";
     const p = el("p");
