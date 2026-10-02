@@ -9,7 +9,7 @@ from django.urls import reverse
 
 from inspections.models import Inspection, PriorityLevel, SummaryPrompt
 from inspections.summarize import SHIPPED_PROMPT_NAME, SYSTEM_PROMPT, summarize
-from inspections.tests.test_output import cite, make_facility
+from inspections.tests.test_output import cite, log_in_staff, make_facility
 from inspections.tests.test_summarize import SETTINGS, block, completion, fake_export
 
 
@@ -239,6 +239,7 @@ class SummarizeUsesTheActivePromptTests(TestCase):
 @override_settings(**SETTINGS)
 class SummaryViewReportsThePromptTests(TestCase):
     def setUp(self):
+        log_in_staff(self.client)
         facility = make_facility("TEST DINER")
         inspection = Inspection.objects.create(
             facility=facility, date=dt.date(2026, 8, 3), inspection_type="Routine"

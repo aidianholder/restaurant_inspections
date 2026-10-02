@@ -9,7 +9,7 @@ from django.urls import reverse
 from inspections.models import Inspection, PriorityLevel
 from inspections.output import Export, build_export
 from inspections.summarize import SYSTEM_PROMPT, SummaryError, summarize
-from inspections.tests.test_output import cite, make_facility
+from inspections.tests.test_output import cite, log_in_staff, make_facility
 
 SETTINGS = dict(
     OPENAI_TOKEN="sk-test",
@@ -276,6 +276,7 @@ class ReconciliationTests(TestCase):
 @override_settings(**SETTINGS)
 class SummaryViewTests(TestCase):
     def setUp(self):
+        log_in_staff(self.client)
         facility = make_facility("TEST DINER")
         inspection = Inspection.objects.create(
             facility=facility, date=dt.date(2026, 8, 3), inspection_type="Routine"
@@ -339,6 +340,7 @@ class SummaryViewTests(TestCase):
 
 class SummaryButtonTests(TestCase):
     def setUp(self):
+        log_in_staff(self.client)
         facility = make_facility("TEST DINER")
         inspection = Inspection.objects.create(
             facility=facility, date=dt.date(2026, 8, 3), inspection_type="Routine"

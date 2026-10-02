@@ -17,6 +17,7 @@ embed.
 import hashlib
 import os
 
+from django.contrib.auth.decorators import login_not_required
 from django.db.models import Count, Max
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -94,6 +95,7 @@ def _rows_for(embed, start, end):
     return rows
 
 
+@login_not_required
 @xframe_options_exempt
 @cache_control(public=True, max_age=BROWSER_CACHE_SECONDS, s_maxage=SHARED_CACHE_SECONDS)
 def embed_page(request, slug):
@@ -138,6 +140,7 @@ def embed_page(request, slug):
     return HttpResponse(html, content_type="text/html")
 
 
+@login_not_required
 @cache_control(public=True, max_age=BROWSER_CACHE_SECONDS)
 def embed_loader(request, slug):
     """The one-line snippet's script: inject the iframe, then track its height."""

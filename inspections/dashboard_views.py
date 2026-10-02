@@ -29,6 +29,7 @@ import json
 import logging
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_not_required
 from django.db.models import Prefetch, Q
 from django.db.models.functions import Lower
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
@@ -193,6 +194,7 @@ def cross_origin(view):
     return wrapper
 
 
+@login_not_required
 @cross_origin
 @gzip_page
 def rows(request, slug):
@@ -237,6 +239,7 @@ def rows(request, slug):
 # admin pages carrying a CSRF token beside reflected search terms — is the setup
 # BREACH needs. Production nginx would also have to list application/json in
 # gzip_types, which it does not by default.
+@login_not_required
 @cross_origin
 @gzip_page
 @cache_control(public=True, max_age=60)
@@ -281,6 +284,7 @@ def map_data(request, slug):
     )
 
 
+@login_not_required
 @cross_origin
 def facility_row(request, slug, facility_id):
     """One row, for a pin click whose row is not on the current page.
@@ -317,6 +321,7 @@ def _config(dashboard, request):
     }
 
 
+@login_not_required
 @xframe_options_exempt
 def page(request, slug):
     """The canonical full-page dashboard.
@@ -338,6 +343,7 @@ def page(request, slug):
 # static asset and hold it for hours. The assets it points at are immutable
 # (`ForgivingManifestStaticFilesStorage` hashes them), so this pointer is the only
 # thing that has to turn over quickly for a deploy to reach readers.
+@login_not_required
 @cache_control(public=True, max_age=60)
 def loader(request, slug):
     """The one-line snippet: mount the component into the newspaper's own page.
@@ -392,6 +398,7 @@ def _grouped(violations):
     return groups
 
 
+@login_not_required
 def establishment(request, slug):
     """One establishment's inspection history, for readers.
 

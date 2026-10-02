@@ -12,7 +12,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from inspections.models import Facility, GeocodeSource, Inspection, PriorityLevel, Violation, fingerprint
-from inspections.tests.test_output import cite, make_facility
+from inspections.tests.test_output import cite, log_in_staff, make_facility
 
 
 def inspect(facility, date, *, kind="Routine", observations=0,
@@ -141,15 +141,17 @@ class UnretrievedInspectionTests(TestCase):
 
     def test_never_retrieved_inspections_are_hidden_from_the_reader_only(self):
         hidden = inspect(self.facility, dt.date(2026, 7, 1), observations=5, scraped=False)
+        self.assertNotContains(self.get(), "July 1, 2026")
+        log_in_staff(self.client)
         staff = self.client.get(reverse("facility-detail", args=[self.facility.slug]))
         self.assertContains(staff, "July 1, 2026")
-        self.assertNotContains(self.get(), "July 1, 2026")
 
 
 class StaffPageStillIntactTests(TestCase):
     """The staff view keeps everything the reader page drops."""
 
     def setUp(self):
+        log_in_staff(self.client)
         self.facility = make_facility("STAFF VIEW")
         self.facility.location = Point(-92.3, 34.7, srid=4326)
         self.facility.geocode_source = GeocodeSource.ARKANSAS_GIS

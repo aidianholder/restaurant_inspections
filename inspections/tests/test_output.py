@@ -1,11 +1,17 @@
 import datetime as dt
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
 from inspections.markdown_render import markdown_to_html
 from inspections.models import Facility, Inspection, PriorityLevel, Violation, fingerprint
 from inspections.output import build_export, establishment_names
+
+
+def log_in_staff(client):
+    """Everything but the reader-facing views needs a staff login."""
+    client.force_login(User.objects.create_user("staff", is_staff=True))
 
 
 def make_facility(name, **kwargs):
@@ -238,6 +244,7 @@ class MarkdownRenderTests(TestCase):
 
 class OutputViewTests(TestCase):
     def setUp(self):
+        log_in_staff(self.client)
         facility = make_facility("TEST DINER")
         inspection = Inspection.objects.create(
             facility=facility, date=dt.date(2026, 8, 3), inspection_type="Routine"
@@ -280,6 +287,9 @@ class OutputViewTests(TestCase):
 
 
 class RenderEndpointTests(TestCase):
+    def setUp(self):
+        log_in_staff(self.client)
+
     def test_markdown_is_rendered_to_html(self):
         r = self.client.post(reverse("output-render"), {"markdown": "### TEST\n\n- one\n"})
         self.assertEqual(r.status_code, 200)

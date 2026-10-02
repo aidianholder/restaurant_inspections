@@ -38,11 +38,17 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Every view requires a login unless it opts out with `@login_not_required`:
+    # the reader-facing establishment, dashboard and embed views do. Staff sign
+    # in through the admin (LOGIN_URL below).
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
+
+LOGIN_URL = "admin:login"
 
 TEMPLATES = [
     {

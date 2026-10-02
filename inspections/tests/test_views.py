@@ -7,6 +7,7 @@ from inspections.latest_inspection import refresh
 from inspections.models import (
     Facility, Inspection, ScrapeRun, Violation, fingerprint,
 )
+from inspections.tests.test_output import log_in_staff
 
 
 class ViewTests(TestCase):
@@ -37,6 +38,9 @@ class ViewTests(TestCase):
             inspector_comments="Milk held above 41 degrees.",
         )
         refresh()
+
+    def setUp(self):
+        log_in_staff(self.client)
 
     def test_facility_list_shows_retrieved_data(self):
         r = self.client.get(reverse("facility-list"))
@@ -133,6 +137,9 @@ class BrowseDateFilterTests(TestCase):
         # run would have rebuilt. Building rows directly skips that.
         refresh()
 
+    def setUp(self):
+        log_in_staff(self.client)
+
     def names(self, response):
         body = response.content.decode()
         return {n for n in ("OLD DINER", "MID DINER", "RECENT DINER") if n in body}
@@ -218,6 +225,9 @@ class BrowseLatestInspectionTests(TestCase):
                 inspection=cls.latest, ordinal=i, priority_level=level, code=f"new-{i}"
             )
         refresh()
+
+    def setUp(self):
+        log_in_staff(self.client)
 
     def row(self):
         # Stands in for the scrape run that would normally rebuild Facility's
